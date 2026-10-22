@@ -481,12 +481,12 @@ export const AdminControlModal: React.FC<AdminControlModalProps> = ({ onClose })
         spin_01_richads: cleanAdId(spin01Richads, '410203'),
         spin_02_monetag: cleanAdId(spin02Monetag, '12044377'),
         spin_03_onclicka: cleanAdId(spin03Onclicka, '6153717E4F'),
-        spin_04_richads: cleanAdId(spin04Richads, '410203'),
+        spin_04_richads: cleanAdId(spin04Richads, '12823'),
         spin_05_monetag: cleanAdId(spin05Monetag, '12044377'),
         box_01_richads: cleanAdId(box01Richads, '410202'),
         box_02_monetag: cleanAdId(box02Monetag, '12044377'),
         box_03_onclicka: cleanAdId(box03Onclicka, '6153772E4F'),
-        box_04_richads: cleanAdId(box04Richads, '410202'),
+        box_04_richads: cleanAdId(box04Richads, '12823'),
         box_05_monetag: cleanAdId(box05Monetag, '12044377'),
         // Mining Waterfall Gate Settings
         miningPrimaryNetwork,
@@ -495,10 +495,38 @@ export const AdminControlModal: React.FC<AdminControlModalProps> = ({ onClose })
         mining_01_richads: cleanAdId(mining01Richads, '410204'),
         mining_02_monetag: cleanAdId(mining02Monetag, '12044377'),
         mining_03_onclicka: cleanAdId(mining03Onclicka, '6153774E4F'),
-        mining_04_richads: cleanAdId(mining04Richads, '410204'),
+        mining_04_richads: cleanAdId(mining04Richads, '12823'),
         mining_05_monetag: cleanAdId(mining05Monetag, '12044377'),
         miningRatePerHour: Number(miningRatePerHour),
       }, adminKey);
+
+      // Instant Live Update: Save to localStorage key "adGateIds"
+      try {
+        localStorage.setItem(
+          'adGateIds',
+          JSON.stringify({
+            mining_01_richads: cleanAdId(mining01Richads, '410204'),
+            mining_02_monetag: cleanAdId(mining02Monetag, '12044377'),
+            mining_03_onclicka: cleanAdId(mining03Onclicka, '6153774E4F'),
+            mining_04_richads: cleanAdId(mining04Richads, '12823'),
+            mining_05_monetag: cleanAdId(mining05Monetag, '12044377'),
+            spin_01_richads: cleanAdId(spin01Richads, '410203'),
+            spin_02_monetag: cleanAdId(spin02Monetag, '12044377'),
+            spin_03_onclicka: cleanAdId(spin03Onclicka, '6153717E4F'),
+            spin_04_richads: cleanAdId(spin04Richads, '12823'),
+            spin_05_monetag: cleanAdId(spin05Monetag, '12044377'),
+            box_01_richads: cleanAdId(box01Richads, '410202'),
+            box_02_monetag: cleanAdId(box02Monetag, '12044377'),
+            box_03_onclicka: cleanAdId(box03Onclicka, '6153772E4F'),
+            box_04_richads: cleanAdId(box04Richads, '12823'),
+            box_05_monetag: cleanAdId(box05Monetag, '12044377'),
+            miningAdDuration: Number(adDuration),
+            spinAdDuration: Number(spinAdDuration),
+            giftBoxAdDuration: Number(giftBoxAdDuration),
+          })
+        );
+      } catch {}
+
       addToast('Saved', 'Mining rate, ad network, durations & waterfall settings updated live!', 'success');
       await refreshMining();
     } catch (err: any) {
@@ -1271,13 +1299,13 @@ export const AdminControlModal: React.FC<AdminControlModalProps> = ({ onClose })
                         </div>
                         <div>
                           <label className="text-[10px] text-slate-400 font-semibold block mb-0.5">
-                            4. RichAds Zone ID / Link (mining_04_richads)
+                            4. RichAds / TADS Zone ID (mining_04_richads)
                           </label>
                           <input
                             type="text"
                             value={mining04Richads}
                             onChange={e => setMining04Richads(e.target.value)}
-                            placeholder="e.g. 410204"
+                            placeholder="e.g. 12823 (TADS) or 410204 (RichAds)"
                             className="w-full px-2.5 py-1.5 rounded-lg bg-slate-900 border border-slate-700 text-xs text-white font-mono"
                           />
                         </div>
@@ -1341,6 +1369,7 @@ export const AdminControlModal: React.FC<AdminControlModalProps> = ({ onClose })
                           </label>
                           <div className="flex items-center gap-2">
                             <input
+                              id="custom_mining_duration"
                               type="number"
                               min="5"
                               max="600"
@@ -1434,13 +1463,13 @@ export const AdminControlModal: React.FC<AdminControlModalProps> = ({ onClose })
                         </div>
                         <div>
                           <label className="text-[10px] text-slate-400 font-semibold block mb-0.5">
-                            4. RichAds ID (spin_04_richads)
+                            4. RichAds / TADS ID (spin_04_richads)
                           </label>
                           <input
                             type="text"
                             value={spin04Richads}
                             onChange={e => setSpin04Richads(e.target.value)}
-                            placeholder="e.g. 410203"
+                            placeholder="e.g. 12823 (TADS) or 410203 (RichAds)"
                             className="w-full px-2.5 py-1.5 rounded-lg bg-slate-900 border border-slate-700 text-xs text-white font-mono"
                           />
                         </div>
@@ -1487,6 +1516,7 @@ export const AdminControlModal: React.FC<AdminControlModalProps> = ({ onClose })
                           </div>
                           <div className="flex items-center gap-2">
                             <input
+                              id="custom_spin_duration"
                               type="number"
                               min="5"
                               max="300"
@@ -1545,13 +1575,13 @@ export const AdminControlModal: React.FC<AdminControlModalProps> = ({ onClose })
                         </div>
                         <div>
                           <label className="text-[10px] text-slate-400 font-semibold block mb-0.5">
-                            Box #4 RichAds ID (box_04_richads)
+                            Box #4 RichAds / TADS ID (box_04_richads)
                           </label>
                           <input
                             type="text"
                             value={box04Richads}
                             onChange={e => setBox04Richads(e.target.value)}
-                            placeholder="e.g. 410202"
+                            placeholder="e.g. 12823 (TADS) or 410202 (RichAds)"
                             className="w-full px-2.5 py-1.5 rounded-lg bg-slate-900 border border-slate-700 text-xs text-white font-mono"
                           />
                         </div>
@@ -1598,6 +1628,7 @@ export const AdminControlModal: React.FC<AdminControlModalProps> = ({ onClose })
                           </div>
                           <div className="flex items-center gap-2">
                             <input
+                              id="custom_gift_duration"
                               type="number"
                               min="5"
                               max="300"

@@ -5,6 +5,7 @@ import { api } from '../../services/api';
 import { GiftBox } from '../../types';
 import { UnifiedRewardedAdModal } from './UnifiedRewardedAdModal';
 import { isDone, setDone } from '../../services/antiFakeAds';
+import { showTadsAd, getAdId } from '../common/AdGate';
 
 interface GiftBoxesModalProps {
   onClose: () => void;
@@ -71,6 +72,13 @@ export const GiftBoxesModal: React.FC<GiftBoxesModalProps> = ({ onClose }) => {
 
     if (doneBoxMap[boxNum]) {
       addToast('Already Claimed', `Gift Box #${boxNum} was already claimed today. Resets at UTC 00:00.`, 'info');
+      return;
+    }
+
+    // Gift Box Click (Box 1-5): if Slot #4 is 12823, show TADS ad for this specific box
+    const box04 = getAdId('box_04');
+    if (box04 === '12823') {
+      showTadsAd('gift', boxNum, () => executeOpenBox(boxNum));
       return;
     }
 

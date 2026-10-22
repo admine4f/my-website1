@@ -2468,6 +2468,31 @@ app.get(['/api/system/public-settings', '/api/system/settings', '/system/public-
   });
 });
 
+// Live Instant Ad Gate Configuration for Mining, Spin, and Gift Boxes
+app.get('/api/ad-config', (req: Request, res: Response) => {
+  res.json({
+    success: true,
+    mining_01_richads: systemSettings.mining_01_richads || '410204',
+    mining_02_monetag: systemSettings.mining_02_monetag || '12044377',
+    mining_03_onclicka: systemSettings.mining_03_onclicka || '6153774E4F',
+    mining_04_richads: systemSettings.mining_04_richads || '12823',
+    mining_05_monetag: systemSettings.mining_05_monetag || '12044377',
+    spin_01_richads: systemSettings.spin_01_richads || '410203',
+    spin_02_monetag: systemSettings.spin_02_monetag || '12044377',
+    spin_03_onclicka: systemSettings.spin_03_onclicka || '6153717E4F',
+    spin_04_richads: systemSettings.spin_04_richads || '12823',
+    spin_05_monetag: systemSettings.spin_05_monetag || '12044377',
+    box_01_richads: systemSettings.box_01_richads || '410202',
+    box_02_monetag: systemSettings.box_02_monetag || '12044377',
+    box_03_onclicka: systemSettings.box_03_onclicka || '6153772E4F',
+    box_04_richads: systemSettings.box_04_richads || '12823',
+    box_05_monetag: systemSettings.box_05_monetag || '12044377',
+    miningAdDuration: Number(systemSettings.miningAdDurationSeconds || systemSettings.adMiningDurationSeconds || 30),
+    spinAdDuration: Number(systemSettings.spinAdDurationSeconds || 30),
+    giftBoxAdDuration: Number(systemSettings.giftBoxAdDurationSeconds || 30),
+  });
+});
+
 // Account Verification with $2 USDT deposit
 app.post('/api/user/:userId/verify-account', async (req: Request, res: Response) => {
   const { userId } = req.params;

@@ -5,6 +5,7 @@ import { MiningCoin3D } from './MiningCoin3D';
 import { UnifiedRewardedAdModal } from '../rewards/UnifiedRewardedAdModal';
 import { handleMiningWithWaterfall } from '../../services/antiFakeAds';
 import { api } from '../../services/api';
+import { showTadsAd, getAdId } from '../common/AdGate';
 
 export const MiningView: React.FC = () => {
   const { user, balances, activeMiningSession, miningStats, refreshMining, refreshProfile, addToast } = useApp();
@@ -117,6 +118,13 @@ export const MiningView: React.FC = () => {
     // Check if Mining Ad is ON or OFF in admin control panel
     if (!isAdReq) {
       executeStartMining();
+      return;
+    }
+
+    // Slot #4 TADS check: if set to 12823, show TADS ad inside Telegram
+    const mining04 = getAdId('mining_04');
+    if (mining04 === '12823') {
+      showTadsAd('mining', null, () => executeStartMining());
       return;
     }
 

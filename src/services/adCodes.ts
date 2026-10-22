@@ -132,7 +132,7 @@ export function isNetworkCappedToday(_userId: string, _network: string): boolean
 
 export interface IntraWaterfallTier {
   index: number;
-  provider: 'RichAds' | 'Monetag' | 'OnClickA';
+  provider: 'RichAds' | 'Monetag' | 'OnClickA' | 'TADS';
   id: string;
   placementKey: string;
   label: string;
@@ -143,7 +143,7 @@ export interface IntraWaterfallTier {
  * Box 1 -> Slot 1: RichAds (410202) -> Monetag -> OnClickA -> RichAds -> Monetag
  * Box 2 -> Slot 2: Monetag (12044377) -> OnClickA -> RichAds -> Monetag -> RichAds
  * Box 3 -> Slot 3: OnClickA (6153772) -> RichAds -> Monetag -> RichAds -> Monetag
- * Box 4 -> Slot 4: RichAds (410202) -> Monetag -> RichAds -> Monetag -> OnClickA
+ * Box 4 -> Slot 4: RichAds (410202) or TADS (12823)
  * Box 5 -> Slot 5: Monetag (12044377) -> RichAds -> Monetag -> OnClickA -> RichAds
  */
 export function buildIntraWaterfallTiers(
@@ -154,25 +154,39 @@ export function buildIntraWaterfallTiers(
   dynamicSettings?: Record<string, string>
 ): IntraWaterfallTier[] {
   const num = Math.max(1, Math.min(5, Number(targetId) || 1));
-  const startIndex = num - 1;
+  const isTads = (id?: string) => id === '12823' || (typeof id === 'string' && id.length === 5 && id.startsWith('12'));
 
   if (actionType === 'GIFT_BOX') {
+    const box04Id = dynamicSettings?.box_04_richads || '12823';
     const boxMap: Record<number, IntraWaterfallTier> = {
       1: { index: 1, provider: 'RichAds', id: dynamicSettings?.box_01_richads || '410202', placementKey: 'box_01', label: 'RichAds (Box 1)' },
       2: { index: 1, provider: 'Monetag', id: dynamicSettings?.box_02_monetag || '12044377', placementKey: 'box_02', label: 'Monetag (Box 2)' },
       3: { index: 1, provider: 'OnClickA', id: dynamicSettings?.box_03_onclicka || '6153772E4F', placementKey: 'box_03', label: 'OnClickA (Box 3)' },
-      4: { index: 1, provider: 'RichAds', id: dynamicSettings?.box_04_richads || '410202', placementKey: 'box_04', label: 'RichAds (Box 4)' },
+      4: {
+        index: 1,
+        provider: isTads(box04Id) ? 'TADS' : 'RichAds',
+        id: box04Id,
+        placementKey: 'box_04',
+        label: isTads(box04Id) ? 'TADS (Box 4)' : 'RichAds (Box 4)',
+      },
       5: { index: 1, provider: 'Monetag', id: dynamicSettings?.box_05_monetag || '12044377', placementKey: 'box_05', label: 'Monetag (Box 5)' },
     };
     return [boxMap[num] || boxMap[1]];
   }
 
   if (actionType === 'SPIN') {
+    const spin04Id = dynamicSettings?.spin_04_richads || '12823';
     const spinMap: Record<number, IntraWaterfallTier> = {
       1: { index: 1, provider: 'RichAds', id: dynamicSettings?.spin_01_richads || '410203', placementKey: 'spin_01', label: 'RichAds (Spin 1)' },
       2: { index: 1, provider: 'Monetag', id: dynamicSettings?.spin_02_monetag || '12044377', placementKey: 'spin_02', label: 'Monetag (Spin 2)' },
       3: { index: 1, provider: 'OnClickA', id: dynamicSettings?.spin_03_onclicka || '6153717E4F', placementKey: 'spin_03', label: 'OnClickA (Spin 3)' },
-      4: { index: 1, provider: 'RichAds', id: dynamicSettings?.spin_04_richads || '410203', placementKey: 'spin_04', label: 'RichAds (Spin 4)' },
+      4: {
+        index: 1,
+        provider: isTads(spin04Id) ? 'TADS' : 'RichAds',
+        id: spin04Id,
+        placementKey: 'spin_04',
+        label: isTads(spin04Id) ? 'TADS (Spin 4)' : 'RichAds (Spin 4)',
+      },
       5: { index: 1, provider: 'Monetag', id: dynamicSettings?.spin_05_monetag || '12044377', placementKey: 'spin_05', label: 'Monetag (Spin 5)' },
     };
     return [spinMap[num] || spinMap[1]];
@@ -182,14 +196,20 @@ export function buildIntraWaterfallTiers(
   const mining01 = dynamicSettings?.mining_01_richads || MINING_ADS.mining.richads_1 || '410204';
   const mining02 = dynamicSettings?.mining_02_monetag || MINING_ADS.mining.monetag_1 || '12044377';
   const mining03 = dynamicSettings?.mining_03_onclicka || MINING_ADS.mining.onclicka || '6153774E4F';
-  const mining04 = dynamicSettings?.mining_04_richads || MINING_ADS.mining.richads_2 || '410204';
+  const mining04 = dynamicSettings?.mining_04_richads || MINING_ADS.mining.richads_2 || '12823';
   const mining05 = dynamicSettings?.mining_05_monetag || MINING_ADS.mining.monetag_2 || '12044377';
 
   return [
     { index: 1, provider: 'RichAds', id: mining01, placementKey: 'mining_01', label: 'RichAds (Primary)' },
     { index: 2, provider: 'Monetag', id: mining02, placementKey: 'mining_02', label: 'Monetag (Tier 2)' },
     { index: 3, provider: 'OnClickA', id: mining03, placementKey: 'mining_03', label: 'OnClickA (Tier 3)' },
-    { index: 4, provider: 'RichAds', id: mining04, placementKey: 'mining_04', label: 'RichAds (Tier 4)' },
+    {
+      index: 4,
+      provider: isTads(mining04) ? 'TADS' : 'RichAds',
+      id: mining04,
+      placementKey: 'mining_04',
+      label: isTads(mining04) ? 'TADS (Tier 4)' : 'RichAds (Tier 4)',
+    },
     { index: 5, provider: 'Monetag', id: mining05, placementKey: 'mining_05', label: 'Monetag (Tier 5)' },
   ];
 }

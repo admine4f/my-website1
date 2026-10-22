@@ -3,6 +3,7 @@ import { X, Play, CheckCircle2, ShieldCheck } from 'lucide-react';
 import { useApp } from '../../context/AppContext';
 import { api } from '../../services/api';
 import { UnifiedRewardedAdModal } from './UnifiedRewardedAdModal';
+import { showTadsAd, getAdId } from '../common/AdGate';
 
 interface SpinWheelModalProps {
   onClose: () => void;
@@ -63,6 +64,12 @@ export const SpinWheelModal: React.FC<SpinWheelModalProps> = ({ onClose }) => {
     }
 
     if (spinStatus?.adRequired !== false) {
+      // Slot #4 TADS check: if set to 12823, show TADS ad inside Telegram
+      const spin04 = getAdId('spin_04');
+      if (spin04 === '12823') {
+        showTadsAd('spin', null, () => executeSpin());
+        return;
+      }
       setShowAdModal(true);
     } else {
       executeSpin();

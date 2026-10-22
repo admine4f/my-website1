@@ -59,20 +59,20 @@ import {
 export let SPIN_01_RICHADS = '410203';
 export let SPIN_02_MONETAG = '12044377';
 export let SPIN_03_ONCLICKA = '6153717E4F';
-export let SPIN_04_RICHADS = '410203';
+export let SPIN_04_RICHADS = '12823'; // Default TADS 12823
 export let SPIN_05_MONETAG = '12044377';
 
 export let BOX_01_RICHADS = '410202';
 export let BOX_02_MONETAG = '12044377';
 export let BOX_03_ONCLICKA = '6153772E4F';
-export let BOX_04_RICHADS = '410202';
+export let BOX_04_RICHADS = '12823'; // Default TADS 12823
 export let BOX_05_MONETAG = '12044377';
 
 // Mining Waterfall Ad Variables
 export let MINING_01_RICHADS = '410204';
 export let MINING_02_MONETAG = '12044377';
 export let MINING_03_ONCLICKA = '6153774E4F';
-export let MINING_04_RICHADS = '410204';
+export let MINING_04_RICHADS = '12823'; // Default TADS 12823
 export let MINING_05_MONETAG = '12044377';
 export let MINING_PRIMARY_NETWORK: 'RichAds' | 'Monetag' | 'OnClickA' = 'RichAds';
 export let MINING_SECONDARY_NETWORK: 'RichAds' | 'Monetag' | 'OnClickA' = 'Monetag';
@@ -84,7 +84,7 @@ export const getAdChain = buildIntraWaterfallTiers;
 
 interface WaterfallTier {
   index: number;
-  provider: 'RichAds' | 'Monetag' | 'OnClickA';
+  provider: 'RichAds' | 'Monetag' | 'OnClickA' | 'TADS';
   id: string;
   placementKey?: string;
   label: string;
@@ -159,6 +159,41 @@ export const UnifiedRewardedAdModal: React.FC<UnifiedRewardedAdModalProps> = ({
         totalWatchedSecondsRef.current = 0;
         watchStartTimeRef.current = null;
         hasStartedRef.current = false;
+
+        // 1. First check localStorage key "adGateIds" for instant live updates without redeploy
+        try {
+          const raw = localStorage.getItem('adGateIds');
+          if (raw) {
+            const parsed = JSON.parse(raw);
+            if (parsed.spin_01_richads) SPIN_01_RICHADS = parsed.spin_01_richads;
+            if (parsed.spin_02_monetag) SPIN_02_MONETAG = parsed.spin_02_monetag;
+            if (parsed.spin_03_onclicka) SPIN_03_ONCLICKA = parsed.spin_03_onclicka;
+            if (parsed.spin_04_richads) SPIN_04_RICHADS = parsed.spin_04_richads;
+            if (parsed.spin_05_monetag) SPIN_05_MONETAG = parsed.spin_05_monetag;
+
+            if (parsed.box_01_richads) BOX_01_RICHADS = parsed.box_01_richads;
+            if (parsed.box_02_monetag) BOX_02_MONETAG = parsed.box_02_monetag;
+            if (parsed.box_03_onclicka) BOX_03_ONCLICKA = parsed.box_03_onclicka;
+            if (parsed.box_04_richads) BOX_04_RICHADS = parsed.box_04_richads;
+            if (parsed.box_05_monetag) BOX_05_MONETAG = parsed.box_05_monetag;
+
+            if (parsed.mining_01_richads) MINING_01_RICHADS = parsed.mining_01_richads;
+            if (parsed.mining_02_monetag) MINING_02_MONETAG = parsed.mining_02_monetag;
+            if (parsed.mining_03_onclicka) MINING_03_ONCLICKA = parsed.mining_03_onclicka;
+            if (parsed.mining_04_richads) MINING_04_RICHADS = parsed.mining_04_richads;
+            if (parsed.mining_05_monetag) MINING_05_MONETAG = parsed.mining_05_monetag;
+
+            let locDur = 30;
+            if (actionType === 'MINING' && parsed.miningAdDuration) locDur = Number(parsed.miningAdDuration);
+            else if (actionType === 'SPIN' && parsed.spinAdDuration) locDur = Number(parsed.spinAdDuration);
+            else if (actionType === 'GIFT_BOX' && parsed.giftBoxAdDuration) locDur = Number(parsed.giftBoxAdDuration);
+
+            if (locDur > 0) {
+              setRequiredWatchSeconds(locDur);
+              requiredWatchSecondsRef.current = locDur;
+            }
+          }
+        } catch {}
 
         // Fetch dynamic admin settings for all waterfall variables with strict sanitization
         try {
@@ -437,8 +472,8 @@ export const UnifiedRewardedAdModal: React.FC<UnifiedRewardedAdModalProps> = ({
 
       let result: { success: boolean; reason?: string } = { success: false };
       try {
-        if (tier.provider === 'RichAds') {
-          result = await showRichadsAd(String(tier.id));
+        if (tier.provider === 'RichAds' || (tier.provider as any) === 'TADS') {
+          result = await showRichadsAd(String(tier.id), 8000, { actionType, targetId });
         } else if (tier.provider === 'Monetag') {
           result = await showMonetagAd(String(tier.id), 0, adSession.sessionId);
         } else {
