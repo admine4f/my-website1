@@ -163,66 +163,53 @@ export function openExternalSponsorAd(url: string) {
 // =========================================================================
 
 /**
- * 1. RichAds Real Ad Handler (Slot 1 & Slot 4)
- * Runs 100% INSIDE Telegram Mini App WebView via window.showRichAdsInTelegram()
- * Never uses window.open, location.href, or Telegram.WebApp.openLink
+ * 1. RichAds (Slot 1 & 4) - plays INSIDE Telegram via window.showRichAdsInTelegram (defined in index.html).
+ * success = true ONLY when the ad was really shown and completed.
  */
 export async function showRichadsAd(
   zoneId: string,
-  _timeoutMs: number = 4000
+  _timeoutMs: number = 0
 ): Promise<{ success: boolean; completed: boolean; adUrl: string; reason?: string }> {
   const cleanId = String(zoneId || '410204').trim();
   const adUrl = getRichadsAdUrl(cleanId);
-
   try {
-    if (typeof window !== 'undefined' && typeof (window as any).showRichAdsInTelegram === 'function') {
-      const ok = await (window as any).showRichAdsInTelegram(cleanId);
-      if (ok) {
-        return { success: true, completed: true, adUrl };
-      }
-    }
-    return { success: false, completed: false, adUrl, reason: 'RichAds in-app ad failed' };
+    const fn = typeof window !== 'undefined' ? (window as any).showRichAdsInTelegram : undefined;
+    if (typeof fn !== 'function') return { success: false, completed: false, adUrl, reason: 'RichAds SDK not ready' };
+    const ok = await fn(cleanId);
+    return ok
+      ? { success: true, completed: true, adUrl }
+      : { success: false, completed: false, adUrl, reason: 'RichAds ad was not completed' };
   } catch (err: any) {
     console.warn('[RichAds Error]:', err);
-    return { success: false, completed: false, adUrl, reason: err?.message || 'RichAds failed to open' };
+    return { success: false, completed: false, adUrl, reason: err?.message || 'RichAds failed' };
   }
 }
 
 /**
- * 2. Monetag Real Ad Handler (Slot 2 & Slot 5 - Native Telegram SDK Zone 12044377)
- * Runs 100% INSIDE Telegram via window.showMonetagInsideTelegram() / show_12044377('pop')
- * Never uses window.open, location.href, or Telegram.WebApp.openLink
+ * 2. Monetag (Slot 2 & 5) - Rewarded Interstitial INSIDE Telegram (never the 'pop' format that opens a new tab).
+ * success = true ONLY when Monetag confirms the ad was watched.
  */
 export async function showMonetagAd(
   zoneId: string,
-  _timeoutMs: number = 6000
+  _timeoutMs: number = 0,
+  ymid?: string
 ): Promise<{ success: boolean; completed: boolean; adUrl: string; reason?: string }> {
   const cleanId = String(zoneId || '12044377').trim();
   const adUrl = getMonetagAdUrl(cleanId);
-
   try {
     if (typeof window !== 'undefined') {
       if (typeof (window as any).showMonetagInsideTelegram === 'function') {
-        const success = await (window as any).showMonetagInsideTelegram();
-        if (success) {
-          return { success: true, completed: true, adUrl };
-        } else {
-          return { success: false, completed: false, adUrl, reason: 'Monetag in-app ad failed' };
-        }
+        const ok = await (window as any).showMonetagInsideTelegram(ymid);
+        return ok
+          ? { success: true, completed: true, adUrl }
+          : { success: false, completed: false, adUrl, reason: 'Monetag ad was not completed' };
       }
-
-      const showFn = (window as any).show_12044377 || window.showMonetagAd || sdkShowMonetagAd;
+      const showFn = (window as any).show_12044377;
       if (typeof showFn === 'function') {
-        try {
-          const res = showFn();
-          if (res && typeof res.then === 'function') await res;
-          return { success: true, completed: true, adUrl };
-        } catch {
-          return { success: false, completed: false, adUrl, reason: 'Monetag in-app ad failed' };
-        }
+        await showFn(ymid ? { ymid: String(ymid), catchIfNoFeed: true } : { catchIfNoFeed: true });
+        return { success: true, completed: true, adUrl };
       }
     }
-
     return { success: false, completed: false, adUrl, reason: 'Monetag SDK not ready' };
   } catch (err: any) {
     console.warn('[Monetag Error]:', err?.message || err);
@@ -230,36 +217,22 @@ export async function showMonetagAd(
   }
 }
 
-import { showTmaAd } from '../components/TmaAdManager';
+import { showTmaAdById } from '../components/TmaAdManager';
 
 /**
- * 3. OnClickA Real Ad Handler (Slot 3)
- * Plays in-stream TMA rewarded ad INSIDE Telegram via window.initCdTma
+ * 3. OnClickA (Slot 3) - in-stream TMA rewarded ad INSIDE Telegram using the exact ID saved in the Admin panel.
  */
 export async function showOnclickaAd(
   zoneId: string,
-  _timeoutMs: number = 4000
+  _timeoutMs: number = 0
 ): Promise<{ success: boolean; completed: boolean; adUrl: string; reason?: string }> {
   const cleanId = String(zoneId || '6153772').trim();
   const adUrl = getOnclickaAdUrl(cleanId);
-
   try {
-    // type mapping: mining_03 -> MINING, box_03 -> GIFTBOX, spin_03 -> SPIN
-    let tmaType: 'MINING' | 'GIFTBOX' | 'SPIN' = 'MINING';
-    const lower = cleanId.toLowerCase();
-    if (lower.includes('spin') || lower.includes('6153717')) {
-      tmaType = 'SPIN';
-    } else if (lower.includes('box') || lower.includes('gift') || lower.includes('6153772')) {
-      tmaType = 'GIFTBOX';
-    } else {
-      tmaType = 'MINING';
-    }
-
-    await showTmaAd(tmaType);
-    // Ad watched successfully INSIDE Telegram
+    await showTmaAdById(cleanId);
     return { success: true, completed: true, adUrl };
   } catch (err: any) {
-    console.warn('[OnClickA TMA Ad failed, falling back to next waterfall network]:', err);
+    console.warn('[OnClickA ad failed]:', err);
     return { success: false, completed: false, adUrl, reason: err?.message || 'OnClickA failed' };
   }
 }
@@ -274,7 +247,7 @@ export const WATERFALL = {
     { network: 'richads', tag: '410202', code: '<script src="https://richinfo.co/richpartners/telegram/js/tg-ob.js?pubId=1025839&appId=9319"></script><script>try{window.TelegramAdsController && window.TelegramAdsController.showRewardedAd(410202);}catch(e){}</script><div style="padding:24px;text-align:center;color:#fff;font-family:sans-serif;"><h3>RichAds In-App Sponsor</h3><p>Zone: 410202</p></div>' },
   ],
   box2: [
-    { network: 'monetag', tag: '12044377', code: '<script src="//gizokraijaw.net/400/12044377.js" async></script><script src="https://libtl.com/sdk.js" data-zone="12044377" data-sdk="show_12044377"></script><script>try{window.show_12044377 && window.show_12044377();}catch(e){}</script><div style="padding:24px;text-align:center;color:#fff;font-family:sans-serif;"><h3>Monetag In-App Sponsor</h3><p>Zone: 12044377</p></div>' },
+    { network: 'monetag', tag: '12044377', code: '<script src="https://libtl.com/sdk.js" data-zone="12044377" data-sdk="show_12044377"></script><script>try{window.show_12044377 && window.show_12044377();}catch(e){}</script><div style="padding:24px;text-align:center;color:#fff;font-family:sans-serif;"><h3>Monetag In-App Sponsor</h3><p>Zone: 12044377</p></div>' },
   ],
   box3: [
     { network: 'onclicka', tag: '6153772E4F', code: '<iframe src="https://highperformanceformat.com/6153772E4F" style="width:100%;height:380px;border:none;"></iframe>' },
@@ -283,36 +256,21 @@ export const WATERFALL = {
     { network: 'richads', tag: '410202', code: '<script src="https://richinfo.co/richpartners/telegram/js/tg-ob.js?pubId=1025839&appId=9319"></script><script>try{window.TelegramAdsController && window.TelegramAdsController.showRewardedAd(410202);}catch(e){}</script><div style="padding:24px;text-align:center;color:#fff;font-family:sans-serif;"><h3>RichAds In-App Sponsor</h3><p>Zone: 410202</p></div>' },
   ],
   box5: [
-    { network: 'monetag', tag: '12044377', code: '<script src="//gizokraijaw.net/400/12044377.js" async></script><script src="https://libtl.com/sdk.js" data-zone="12044377" data-sdk="show_12044377"></script><script>try{window.show_12044377 && window.show_12044377();}catch(e){}</script><div style="padding:24px;text-align:center;color:#fff;font-family:sans-serif;"><h3>Monetag In-App Sponsor</h3><p>Zone: 12044377</p></div>' },
+    { network: 'monetag', tag: '12044377', code: '<script src="https://libtl.com/sdk.js" data-zone="12044377" data-sdk="show_12044377"></script><script>try{window.show_12044377 && window.show_12044377();}catch(e){}</script><div style="padding:24px;text-align:center;color:#fff;font-family:sans-serif;"><h3>Monetag In-App Sponsor</h3><p>Zone: 12044377</p></div>' },
   ],
   spin: [
     { network: 'richads', tag: '410203', code: '<script src="https://richinfo.co/richpartners/telegram/js/tg-ob.js?pubId=1025839&appId=9319"></script><script>try{window.TelegramAdsController && window.TelegramAdsController.showRewardedAd(410203);}catch(e){}</script><div style="padding:24px;text-align:center;color:#fff;font-family:sans-serif;"><h3>RichAds In-App Sponsor</h3><p>Zone: 410203</p></div>' },
   ],
-  spin1: [
-    { network: 'richads', tag: '410203', code: '<script src="https://richinfo.co/richpartners/telegram/js/tg-ob.js?pubId=1025839&appId=9319"></script><script>try{window.TelegramAdsController && window.TelegramAdsController.showRewardedAd(410203);}catch(e){}</script><div style="padding:24px;text-align:center;color:#fff;font-family:sans-serif;"><h3>RichAds In-App Sponsor</h3><p>Zone: 410203</p></div>' },
-  ],
-  spin2: [
-    { network: 'monetag', tag: '12044377', code: '<script src="https://gizokraijaw.net/400/12044377.js" async></script><script src="https://libtl.com/sdk.js" data-zone="12044377" data-sdk="show_12044377"></script><script>try{window.show_12044377 && window.show_12044377();}catch(e){}</script><div style="padding:24px;text-align:center;color:#fff;font-family:sans-serif;"><h3>Monetag In-App Sponsor</h3><p>Zone: 12044377</p></div>' },
-  ],
-  spin3: [
-    { network: 'onclicka', tag: '6153717E4F', code: '<iframe src="https://highperformanceformat.com/6153717E4F" style="width:100%;height:380px;border:none;"></iframe>' },
-  ],
-  spin4: [
-    { network: 'richads', tag: '410203', code: '<script src="https://richinfo.co/richpartners/telegram/js/tg-ob.js?pubId=1025839&appId=9319"></script><script>try{window.TelegramAdsController && window.TelegramAdsController.showRewardedAd(410203);}catch(e){}</script><div style="padding:24px;text-align:center;color:#fff;font-family:sans-serif;"><h3>RichAds In-App Sponsor</h3><p>Zone: 410203</p></div>' },
-  ],
-  spin5: [
-    { network: 'monetag', tag: '12044377', code: '<script src="https://gizokraijaw.net/400/12044377.js" async></script><script src="https://libtl.com/sdk.js" data-zone="12044377" data-sdk="show_12044377"></script><script>try{window.show_12044377 && window.show_12044377();}catch(e){}</script><div style="padding:24px;text-align:center;color:#fff;font-family:sans-serif;"><h3>Monetag In-App Sponsor</h3><p>Zone: 12044377</p></div>' },
-  ],
   mining: [
     { network: 'richads', tag: '410204', code: '<script src="https://richinfo.co/richpartners/telegram/js/tg-ob.js?pubId=1025839&appId=9319"></script><script>try{window.TelegramAdsController && window.TelegramAdsController.showRewardedAd(410204);}catch(e){}</script><div style="padding:24px;text-align:center;color:#fff;font-family:sans-serif;"><h3>RichAds In-App Sponsor</h3><p>Zone: 410204</p></div>' },
-    { network: 'monetag', tag: '12044377', code: '<script src="//gizokraijaw.net/400/12044377.js" async></script><script src="https://libtl.com/sdk.js" data-zone="12044377" data-sdk="show_12044377"></script><script>try{window.show_12044377 && window.show_12044377();}catch(e){}</script><div style="padding:24px;text-align:center;color:#fff;font-family:sans-serif;"><h3>Monetag In-App Sponsor</h3><p>Zone: 12044377</p></div>' },
+    { network: 'monetag', tag: '12044377', code: '<script src="https://libtl.com/sdk.js" data-zone="12044377" data-sdk="show_12044377"></script><script>try{window.show_12044377 && window.show_12044377();}catch(e){}</script><div style="padding:24px;text-align:center;color:#fff;font-family:sans-serif;"><h3>Monetag In-App Sponsor</h3><p>Zone: 12044377</p></div>' },
     { network: 'onclicka', tag: '6153774E4F', code: '<iframe src="https://highperformanceformat.com/6153774E4F" style="width:100%;height:380px;border:none;"></iframe>' },
     { network: 'richads', tag: '410204', code: '<script src="https://richinfo.co/richpartners/telegram/js/tg-ob.js?pubId=1025839&appId=9319"></script><script>try{window.TelegramAdsController && window.TelegramAdsController.showRewardedAd(410204);}catch(e){}</script><div style="padding:24px;text-align:center;color:#fff;font-family:sans-serif;"><h3>RichAds In-App Sponsor</h3><p>Zone: 410204</p></div>' },
-    { network: 'monetag', tag: '12044377', code: '<script src="//gizokraijaw.net/400/12044377.js" async></script><script src="https://libtl.com/sdk.js" data-zone="12044377" data-sdk="show_12044377"></script><script>try{window.show_12044377 && window.show_12044377();}catch(e){}</script><div style="padding:24px;text-align:center;color:#fff;font-family:sans-serif;"><h3>Monetag In-App Sponsor</h3><p>Zone: 12044377</p></div>' },
+    { network: 'monetag', tag: '12044377', code: '<script src="https://libtl.com/sdk.js" data-zone="12044377" data-sdk="show_12044377"></script><script>try{window.show_12044377 && window.show_12044377();}catch(e){}</script><div style="padding:24px;text-align:center;color:#fff;font-family:sans-serif;"><h3>Monetag In-App Sponsor</h3><p>Zone: 12044377</p></div>' },
   ]
 };
 
-export type HouseType = 'box1' | 'box2' | 'box3' | 'box4' | 'box5' | 'spin' | 'spin1' | 'spin2' | 'spin3' | 'spin4' | 'spin5' | 'mining';
+export type HouseType = 'box1' | 'box2' | 'box3' | 'box4' | 'box5' | 'spin' | 'mining';
 
 export function getAdForHouse(house: HouseType | string, attempt: number) {
   const list = (WATERFALL as any)[house] || WATERFALL.mining;
@@ -321,4 +279,3 @@ export function getAdForHouse(house: HouseType | string, attempt: number) {
   }
   return list[attempt % list.length] || list[0]; // Waterfall rotation ONLY for mining!
 }
-

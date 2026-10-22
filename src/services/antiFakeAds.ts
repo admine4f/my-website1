@@ -19,11 +19,40 @@ export function verifyAdWatch() {
   if (watched < 25) return { valid:false, reason: 'Fake Report! Watch 30s - You watched '+Math.floor(watched)+'s' };
   return { valid:true };
 }
+// Redirect guard: external navigation is blocked ONLY while an ad is playing.
+// (Old version replaced window.open with a dead function for the whole session, which broke ad SDKs and other links.)
+let adGuardDepth = 0;
+let adGuardInstalled = false;
+export function beginAdRedirectGuard() { adGuardDepth++; }
+export function endAdRedirectGuard() { adGuardDepth = Math.max(0, adGuardDepth - 1); }
 export function blockExternalRedirect() {
-  try { (window as any).open = () => null; } catch(e){}
+  if (adGuardInstalled || typeof window === 'undefined') return;
+  adGuardInstalled = true;
+  try {
+    const origOpen = window.open.bind(window);
+    (window as any).open = (...args: any[]) => {
+      if (adGuardDepth > 0) { console.warn('[AdGuard] blocked window.open during ad'); return null; }
+      return (origOpen as any)(...args);
+    };
+  } catch (e) {}
+  try {
+    const wa = (window as any).Telegram?.WebApp;
+    if (wa) {
+      ['openLink', 'openTelegramLink'].forEach((fnName) => {
+        const orig = wa[fnName];
+        if (typeof orig === 'function') {
+          wa[fnName] = function (...a: any[]) {
+            if (adGuardDepth > 0) { console.warn('[AdGuard] blocked ' + fnName + ' during ad'); return; }
+            return orig.apply(wa, a);
+          };
+        }
+      });
+    }
+  } catch (e) {}
   if (typeof document !== 'undefined') {
     try {
       document.addEventListener('click', (e) => {
+        if (adGuardDepth <= 0) return;
         const el = e.target as HTMLElement;
         const a = el?.closest ? (el.closest('a') as HTMLAnchorElement) : null;
         if (a && a.target === '_blank') {
@@ -235,60 +264,24 @@ export async function showInside(network: 'richads' | 'monetag' | 'onclicka', id
 
   try {
     if (network === 'richads') {
-      const ctrl = (window as any).TelegramAdsController;
-      if (ctrl) {
-        try {
-          if (typeof ctrl.showRewardedAd === 'function') {
-            const res = await ctrl.showRewardedAd(Number(id));
-            return res !== false;
-          } else if (typeof ctrl.show === 'function') {
-            await ctrl.show({ id: String(id), zone: String(id), placement: String(id) });
-            return true;
-          } else if (typeof ctrl.showAd === 'function') {
-            await ctrl.showAd({ id: String(id), zone: String(id) });
-            return true;
-          }
-        } catch (err) {
-          console.warn('[RichAds error]:', err);
-          return false;
-        }
-      }
-      return false;
+      const fn = (window as any).showRichAdsInTelegram;
+      return typeof fn === 'function' ? Boolean(await fn(id)) : false;
     }
 
     if (network === 'monetag') {
-      const fn = (window as any).show_12044377;
-      if (typeof fn === 'function') {
-        try {
-          await fn();
-          return true;
-        } catch {
-          return false;
-        }
-      } else if (typeof (window as any).showRewardedAd === 'function') {
-        try {
-          await (window as any).showRewardedAd();
-          return true;
-        } catch {
-          return false;
-        }
-      }
-      return false;
+      const fn = (window as any).showMonetagInsideTelegram;
+      return typeof fn === 'function' ? Boolean(await fn()) : false;
     }
 
     if (network === 'onclicka') {
-      if ((window as any).initCdTma) {
-        try {
-          const show = await (window as any).initCdTma({ id: String(id) });
-          if (typeof show === 'function') {
-            await show();
-            return true;
-          }
-        } catch (err) {
-          console.warn('[initCdTma TMA warning]:', err);
-        }
+      try {
+        const { showTmaAdById } = await import('../components/TmaAdManager');
+        await showTmaAdById(String(id));
+        return true;
+      } catch (err) {
+        console.warn('[OnClickA TMA warning]:', err);
+        return false;
       }
-      return await renderOnclickaInAppOverlay(id);
     }
 
     return false;

@@ -169,7 +169,7 @@
       })();
     </script>
     <!-- RichAds Telegram Mini App SDK (First Ad Tag) -->
-    <script src="https://richinfo.co/richpartners/telegram/js/tg-ob.js?pubId=1025839&appId=9319"></script>
+    <script src="https://richinfo.co/richpartners/telegram/js/tg-ob.js"></script>
     <script>
       try {
         if (typeof TelegramAdsController !== 'undefined') {
@@ -183,33 +183,34 @@
         console.warn('[RichAds Controller Init Warn]:', e);
       }
 
-      // Global In-App RichAds Telegram Bridge (Never opens external browser)
+      // Global In-App RichAds Telegram Bridge (never opens an external browser).
+      // Uses ONLY the Interstitial Banner (rewarded, 10s video inside the Mini App) with the default parameter
+      // (false) so the creative is shown INSIDE the app and never jumps straight to an offer page.
+      // Resolves TRUE only when RichAds reports a successful ad interaction; FALSE for not-displayed / error.
       window.showRichAdsInTelegram = function(richadsId) {
-        console.log('Attempt RichAds', richadsId);
         return new Promise(function(resolve) {
-          var resolved = false;
-          function safeResolve(val) {
-            if (!resolved) {
-              resolved = true;
-              resolve(val);
-            }
+          var finished = false;
+          function fin(v, why) {
+            if (finished) return;
+            finished = true;
+            console.log('[RichAds] result =', v, why || '');
+            resolve(v);
           }
-
           try {
             var ctrl = window.TelegramAdsController;
-            if (ctrl) {
-              console.log('RichAds controller available for:', richadsId);
-              var idStr = String(richadsId || '410204');
-              if (typeof ctrl.showRewardedAd === 'function') {
-                try { ctrl.showRewardedAd(idStr); } catch (e) {}
-              } else if (typeof ctrl.showInApp === 'function') {
-                try { ctrl.showInApp({ id: idStr }); } catch (e) {}
-              }
+            if (!ctrl || typeof ctrl.triggerInterstitialBanner !== 'function') {
+              return fin(false, 'controller not ready');
             }
-            safeResolve(true);
+            var r = ctrl.triggerInterstitialBanner(false);
+            if (r && typeof r.then === 'function') {
+              r.then(function() { fin(true, 'ad completed'); }, function(err) { console.warn('[RichAds] not displayed:', err); fin(false, 'not displayed'); });
+            } else {
+              fin(false, 'unexpected sdk response');
+            }
+            setTimeout(function() { fin(false, 'timeout'); }, 180000);
           } catch (e) {
             console.error('RichAds invoke error:', e);
-            safeResolve(false);
+            fin(false, 'exception');
           }
         });
       };
@@ -231,25 +232,33 @@
       }
     </style>
     <!-- Monetag Telegram Mini App SDK (Zone 12044377) -->
-    <script src="//gizokraijaw.net/400/12044377.js" async></script>
     <script src="https://libtl.com/sdk.js" data-zone="12044377" data-sdk="show_12044377"></script>
     <!-- OnClickA TMA In-Stream Ad Manager (window.initCdTma) -->
     <script src="https://js.onclckvd.com/in-stream-ad-admanager/tma.js"></script>
     <script>
-      // Immediate In-App Monetag Telegram Bridge (Never opens external browser)
-      window.showMonetagInsideTelegram = function() {
+      // In-App Monetag Telegram Bridge: Rewarded Interstitial (plays INSIDE the Mini App, never 'pop').
+      // ymid = our ad-session id (lets Monetag confirm the view to our server via postback).
+      // catchIfNoFeed:true = if Monetag has no ad, the promise REJECTS (so nobody is rewarded without an ad).
+      // Resolves TRUE only when Monetag confirms the ad was watched; FALSE for no-fill / error.
+      window.showMonetagInsideTelegram = function(ymid) {
         return new Promise(function(resolve) {
+          var finished = false;
+          function fin(v) { if (!finished) { finished = true; resolve(v); } }
           try {
             var fn = window.show_12044377;
-            if (typeof fn !== 'function') return resolve(false);
-            var res = fn();
+            if (typeof fn !== 'function') { console.warn('[Monetag] SDK not ready'); return fin(false); }
+            var opts = { catchIfNoFeed: true };
+            if (ymid) opts.ymid = String(ymid);
+            var res = fn(opts);
             if (res && typeof res.then === 'function') {
-              res.then(function() { resolve(true); }).catch(function() { resolve(false); });
+              res.then(function() { fin(true); }).catch(function(err) { console.warn('[Monetag] no ad:', err); fin(false); });
             } else {
-              resolve(true);
+              fin(false);
             }
+            setTimeout(function() { fin(false); }, 180000);
           } catch (e) {
-            resolve(false);
+            console.warn('[Monetag] error:', e);
+            fin(false);
           }
         });
       };
@@ -260,4 +269,3 @@
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>
-

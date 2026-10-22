@@ -2940,7 +2940,12 @@ app.post('/api/ads/session/complete', (req: Request, res: Response) => {
       : (systemSettings.giftBoxAdDurationSeconds || 30)
   );
   // Strictly enforce required duration (allow at most 1s clock drift tolerance)
-  const minRequiredMs = Math.max(1000, (requiredSeconds - 1) * 1000);
+  // NOTE: when the ad network SDK itself confirmed the ad was shown to the end (signal ends with _SDK_COMPLETED),
+  // the real ad length decides (ads are often shorter than the configured seconds), so only a small minimum applies.
+  const isNetworkSdkCompleted = typeof sdkSignal === 'string' && /_SDK_COMPLETED$/.test(sdkSignal);
+  const minRequiredMs = isNetworkSdkCompleted
+    ? 3000
+    : Math.max(1000, (requiredSeconds - 1) * 1000);
 
   if (elapsedMs < minRequiredMs) {
     const remainingSeconds = Math.max(1, Math.ceil((requiredSeconds * 1000 - elapsedMs) / 1000));

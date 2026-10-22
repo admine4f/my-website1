@@ -1,26 +1,14 @@
 import { useEffect, useRef } from 'react';
+import { beginAdRedirectGuard, endAdRedirectGuard, blockExternalRedirect } from '../services/antiFakeAds';
 
 export default function AdInside({ adScript }: { adScript: string }) {
   const ref = useRef<HTMLDivElement>(null);
   
   useEffect(() => {
-    // BLOCK ALL EXTERNAL
-    const block = () => {
-      try {
-        (window as any).open = () => null;
-        // Block top navigation
-        const desc = Object.getOwnPropertyDescriptor(window, 'location');
-        if (desc?.configurable) {
-          Object.defineProperty(window, 'location', {
-            ...desc,
-            set: () => console.log('Blocked top.location'),
-            get: () => window.location
-          });
-        }
-      } catch(e){}
-    };
-    block();
-    
+    // Block external navigation ONLY while this ad container is on screen (scoped guard)
+    blockExternalRedirect();
+    beginAdRedirectGuard();
+
     if (ref.current) {
       ref.current.innerHTML = '';
       const iframe = document.createElement('iframe');
@@ -53,7 +41,7 @@ export default function AdInside({ adScript }: { adScript: string }) {
     });
     obs.observe(document.body, { childList: true, subtree: true });
     
-    return () => obs.disconnect();
+    return () => { obs.disconnect(); endAdRedirectGuard(); };
   }, [adScript]);
   
   return <div ref={ref} style={{width:'100%', minHeight:'400px'}} />;

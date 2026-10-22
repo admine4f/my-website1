@@ -111,39 +111,8 @@ declare global {
   }
 }
 
-if (typeof window !== 'undefined') {
-  window.showMonetagInsideTelegram = () => new Promise(async (resolve) => {
-    try {
-      const fn = (window as any).show_12044377;
-      if (typeof fn !== 'function') return resolve(false);
-      await fn();
-      resolve(true);
-    } catch (e) {
-      resolve(false);
-    }
-  });
-
-  window.showRichAdsInTelegram = async (richadsId?: string | number) => {
-    console.log('Attempt RichAds in-app', richadsId);
-    return new Promise((resolve) => {
-      try {
-        const ctrl = (window as any).TelegramAdsController;
-        if (ctrl) {
-          const idStr = String(richadsId || '410204');
-          if (typeof ctrl.showRewardedAd === 'function') {
-            try { ctrl.showRewardedAd(idStr); } catch (e) {}
-          } else if (typeof ctrl.showInApp === 'function') {
-            try { ctrl.showInApp({ id: idStr }); } catch (e) {}
-          }
-        }
-        resolve(true);
-      } catch (e) {
-        console.error('RichAds error:', e);
-        resolve(false);
-      }
-    });
-  };
-}
+// NOTE: window.showMonetagInsideTelegram and window.showRichAdsInTelegram are defined ONLY in index.html.
+// (Previous duplicates here overwrote them and reported success without showing any ad.)
 
 import { initAllTmaAds } from './components/TmaAdManager';
 import { blockExternalRedirect } from './services/antiFakeAds';

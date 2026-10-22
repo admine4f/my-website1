@@ -21,52 +21,23 @@ import {
   getProviderAdUrl,
   openExternalSponsorAd,
 } from '../../services/adWaterfall';
-import { blockExternalRedirect, generateAdToken, verifyAdWatch } from '../../services/antiFakeAds';
+import { preloadTmaAdById } from '../TmaAdManager';
+import { blockExternalRedirect, generateAdToken, verifyAdWatch, beginAdRedirectGuard, endAdRedirectGuard } from '../../services/antiFakeAds';
 import AdInside from '../AdInside';
 import AdWaterfall from '../AdWaterfall';
 
 function getAdInsideScript(provider: string, zoneId: string | number): string {
+  // Static ad-stage panel (same look as before). The REAL ad is played by the network SDK inside the Mini App
+  // (overlay), never inside this sandboxed iframe, so no ad script is loaded here.
   const z = String(zoneId || '410202');
-  if (provider === 'RichAds' || z.startsWith('4102')) {
-    return `<script src="https://richinfo.co/richpartners/telegram/js/tg-ob.js?pubId=1025839&appId=9319"></script>
-<script>
-  try {
-    if (window.TelegramAdsController) {
-      window.TelegramAdsController.showRewardedAd(${z});
-    }
-  } catch(e) {}
-</script>
-<div style="padding: 24px 16px; text-align: center; color: #fff; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;">
-  <div style="font-size: 16px; font-weight: 800; color: #F59E0B; margin-bottom: 8px;">RichAds Verified In-App Sponsor</div>
-  <div style="font-size: 12px; color: #94A3B8;">Zone ID: ${z} • 100% In-App Delivery</div>
+  const isRich = provider === 'RichAds' || (provider !== 'Monetag' && provider !== 'OnClickA' && z.startsWith('4102'));
+  const isMonetag = provider === 'Monetag';
+  const color = isRich ? '#F59E0B' : isMonetag ? '#38BDF8' : '#34D399';
+  const name = isRich ? 'RichAds' : isMonetag ? 'Monetag' : 'OnClickA';
+  return `<div style="padding: 24px 16px; text-align: center; color: #fff; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;">
+  <div style="font-size: 16px; font-weight: 800; color: ${color}; margin-bottom: 8px;">Your ad is playing</div>
+  <div style="font-size: 12px; color: #94A3B8;">Watch it to the end. Your reward is added automatically.</div>
 </div>`;
-  }
-  if (provider === 'Monetag' || z === '12044377') {
-    return `<script src="https://gizokraijaw.net/400/12044377.js" async></script>
-<script src="https://libtl.com/sdk.js" data-zone="12044377" data-sdk="show_12044377"></script>
-<script>
-  try {
-    if (window.show_12044377) window.show_12044377();
-  } catch(e) {}
-</script>
-<div style="padding: 24px 16px; text-align: center; color: #fff; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;">
-  <div style="font-size: 16px; font-weight: 800; color: #38BDF8; margin-bottom: 8px;">Monetag Verified In-App Sponsor</div>
-  <div style="font-size: 12px; color: #94A3B8;">Zone ID: 12044377 • 100% In-App Delivery</div>
-</div>`;
-  }
-  return `<script src="https://js.onclckvd.com/in-stream-ad-admanager/tma.js"></script>
-<script>
-  try {
-    if (window.initCdTma) {
-      window.initCdTma({ id: '${z}' }).then(function(show) { if (typeof show === 'function') show(); });
-    }
-  } catch(e) {}
-</script>
-<div style="padding: 24px 16px; text-align: center; color: #fff; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;">
-  <div style="font-size: 16px; font-weight: 800; color: #A855F7; margin-bottom: 8px;">OnClickA Verified In-App Sponsor</div>
-  <div style="font-size: 12px; color: #94A3B8;">Spot ID: ${z} • 100% In-App Delivery</div>
-</div>
-<iframe src="https://highperformanceformat.com/${z}" style="width:100%;height:300px;border:none;"></iframe>`;
 }
 import {
   SPIN_ADS,
@@ -173,6 +144,7 @@ export const UnifiedRewardedAdModal: React.FC<UnifiedRewardedAdModalProps> = ({
   const isMountedRef = useRef<boolean>(true);
   const hasStartedRef = useRef<boolean>(false);
   const isVerifyingRef = useRef<boolean>(false);
+  const adRunningRef = useRef<boolean>(false);
 
   // 1. Initialize Waterfall Tiers & Ad Session
   useEffect(() => {
@@ -256,6 +228,13 @@ export const UnifiedRewardedAdModal: React.FC<UnifiedRewardedAdModalProps> = ({
         setTiers(computedTiers);
         setTierIndex(0);
 
+        // Warm up OnClickA spots so the ad starts instantly when the user taps "Watch Video Ad"
+        try {
+          computedTiers.forEach((t: any) => {
+            if (t && t.provider === 'OnClickA') preloadTmaAdById(String(t.id));
+          });
+        } catch {}
+
         // Create authoritative backend session
         const session = await api.createUniversalAdSession(userId, actionType, targetId);
         if (!isMountedRef.current) return;
@@ -313,10 +292,14 @@ export const UnifiedRewardedAdModal: React.FC<UnifiedRewardedAdModalProps> = ({
   const advanceWaterfall = useCallback(
     (reason: string) => {
       if (!isMountedRef.current) return;
+      if (adRunningRef.current) return; // an ad is playing right now - do not interrupt
       if (actionType !== 'MINING') {
+        // Spin / Gift Box: dedicated ad only. Return to READY so the same ad can be retried (no reward without the ad).
         console.log(`[UnifiedRewardedAdModal] Waterfall disabled for ${actionType}. Retrying dedicated ad.`);
-        setStep('WATCHING');
-        startAdWatchTimer();
+        if (timerRef.current) clearInterval(timerRef.current);
+        setErrorMsg(null);
+        setTierFailReason(null);
+        setStep('READY');
         return;
       }
       if (timerRef.current) clearInterval(timerRef.current);
@@ -409,7 +392,7 @@ export const UnifiedRewardedAdModal: React.FC<UnifiedRewardedAdModalProps> = ({
   // Helper to resume watching from where it was paused (e.g. 25s watched -> remaining 5s)
   const handleResumeWatching = () => {
     setErrorMsg(null);
-    startAdWatchTimer();
+    handleWatchAdClick();
   };
 
   // 4. User Clicks "Watch Ad Now"
@@ -418,54 +401,82 @@ export const UnifiedRewardedAdModal: React.FC<UnifiedRewardedAdModalProps> = ({
   const handleWatchAdClick = async (e?: React.MouseEvent) => {
     if (e) e.preventDefault();
     if (!adSession || tiers.length === 0) return;
-    const currentTier = tiers[tierIndex] || tiers[0];
+    if (adRunningRef.current || isVerifyingRef.current) return;
+    adRunningRef.current = true;
     setErrorMsg(null);
+    setTierFailReason(null);
 
-    // Call blockExternalRedirect and generateAdToken before showing any ad
+    // External redirects are blocked ONLY while the ad is on screen
     blockExternalRedirect();
+    beginAdRedirectGuard();
     generateAdToken();
 
-    // Track Ad View in Supabase e4f_ad_views
-    const placementName = currentTier.placementKey || `${actionType}_${targetId || 1}`;
-    // Trigger in-app native ad handlers if available without popups/redirects
-    if (currentTier.provider === 'RichAds') {
+    // Tell the server the real ad has started (needed for session verification).
+    // NOT awaited here: the ad must start immediately inside the user's tap (video with sound needs that).
+    hasStartedRef.current = false;
+    const serverStartPromise: Promise<any> = Promise.resolve(
+      api.startAdWatching(adSession.sessionId, adSession.token, userId)
+    ).catch(() => null);
+
+    setStep('WATCHING');
+
+    // SPIN / GIFT_BOX: only the dedicated ad of this slot. MINING: waterfall - if one network fails, next one plays.
+    const isMining = actionType === 'MINING';
+    const firstIndex = tierIndex;
+    const endIndex = isMining ? tiers.length : Math.min(tiers.length, tierIndex + 1);
+    let shownTier: WaterfallTier | null = null;
+
+    for (let i = firstIndex; i < endIndex; i++) {
+      if (!isMountedRef.current) break;
+      const tier = tiers[i];
+      setTierIndex(i);
+      setRenderedAdUrl('');
+      if (i > firstIndex) {
+        setTierFailReason(`Switching to ${tier.provider}...`);
+      }
+
+      let result: { success: boolean; reason?: string } = { success: false };
       try {
-        if ((window as any).TelegramAdsController?.showRewardedAd) {
-          (window as any).TelegramAdsController.showRewardedAd(Number(currentTier.id) || (actionType === 'SPIN' ? 410203 : 410202));
+        if (tier.provider === 'RichAds') {
+          result = await showRichadsAd(String(tier.id));
+        } else if (tier.provider === 'Monetag') {
+          result = await showMonetagAd(String(tier.id), 0, adSession.sessionId);
+        } else {
+          result = await showOnclickaAd(String(tier.id));
         }
-      } catch (e) {}
-    } else if (currentTier.provider === 'Monetag') {
-      try {
-        if (typeof (window as any).show_12044377 === 'function') {
-          (window as any).show_12044377();
-        }
-      } catch (e) {}
-    } else if (currentTier.provider === 'OnClickA') {
-      try {
-        if (typeof (window as any).initCdTma === 'function') {
-          (window as any).initCdTma({ id: String(currentTier.id || (actionType === 'SPIN' ? '6153717E4F' : '6153772E4F')) }).then((show: any) => {
-            if (typeof show === 'function') show();
-          }).catch(() => {});
-        }
-      } catch (e) {}
+      } catch (err: any) {
+        result = { success: false, reason: err?.message || 'Ad failed' };
+      }
+
+      if (result.success) {
+        shownTier = tier;
+        break;
+      }
+      console.warn(`[Ad] ${tier.provider} (${tier.id}) not completed: ${result.reason || 'unknown'}`);
     }
 
-    // 100% In-App ad watching inside Telegram Mini App:
-    // Start countdown and display in-app ad container directly.
-    // Strictly NO external redirect to Chrome or popup!
-    startAdWatchTimer();
+    adRunningRef.current = false;
+    endAdRedirectGuard();
+
+    if (!isMountedRef.current) return;
+    setTierFailReason(null);
+
+    if (shownTier) {
+      // Ad was really shown and completed -> reward automatically (no waiting time)
+      await serverStartPromise; // make sure the server registered the start before the completion call
+      await handleClaimReward(
+        `WATERFALL_${String(shownTier.provider).toUpperCase()}_${shownTier.id}_SDK_COMPLETED`,
+        shownTier
+      );
+    } else {
+      // No ad was shown -> NO reward
+      setStep('ALL_FAILED');
+    }
   };
 
   // 5. Authoritative Backend Verification & Claim
-  const handleClaimReward = async (customSignal?: string) => {
-    // Call verifyAdWatch() only
-    const check = verifyAdWatch();
-    if (!check.valid) {
-      isVerifyingRef.current = false;
-      setErrorMsg(check.reason || 'Fake Report! Watch 30s');
-      setStep('EARLY_EXIT');
-      return;
-    }
+  const handleClaimReward = async (customSignal?: string, tierOverride?: WaterfallTier) => {
+    // Reward is based on the ad network completion signal (ad really shown), not on a client timer.
 
     if (!adSession || isVerifyingRef.current) return;
     isVerifyingRef.current = true;
@@ -473,7 +484,7 @@ export const UnifiedRewardedAdModal: React.FC<UnifiedRewardedAdModalProps> = ({
       setStep('VERIFYING');
       setErrorMsg(null);
 
-      const currentTier = tiers[tierIndex] || tiers[0];
+      const currentTier = tierOverride || tiers[tierIndex] || tiers[0];
       const signalToSubmit = customSignal || `WATERFALL_${currentTier?.provider}_${currentTier?.id}_COMPLETED`;
 
       const verifyRes = await api.completeUniversalAdSession(
@@ -499,12 +510,13 @@ export const UnifiedRewardedAdModal: React.FC<UnifiedRewardedAdModalProps> = ({
         }
       } else {
         isVerifyingRef.current = false;
-        advanceWaterfall('Server could not validate ad completion signal.');
+        setErrorMsg('Could not verify the ad. Please try again.');
+        setStep('ERROR');
       }
     } catch (err: any) {
       isVerifyingRef.current = false;
       if (!isMountedRef.current) return;
-      setStep('EARLY_EXIT');
+      setStep('ERROR');
       setErrorMsg(err.message || `Verification failed. Full ${requiredWatchSecondsRef.current || DEFAULT_WATCH_SECONDS}s watch required.`);
     }
   };
@@ -635,9 +647,7 @@ export const UnifiedRewardedAdModal: React.FC<UnifiedRewardedAdModalProps> = ({
             >
               <Play className="w-4 h-4 fill-slate-950" />
               <span>
-                {currentTier?.provider === 'Monetag'
-                  ? 'Watch Video Ad'
-                  : `Watch Video Ad (${targetWatchSeconds}s)`}
+                Watch Video Ad
               </span>
             </button>
           </div>
@@ -657,7 +667,7 @@ export const UnifiedRewardedAdModal: React.FC<UnifiedRewardedAdModalProps> = ({
                 WATCH FULL ADS TO GET REWARD
               </div>
               <div className="text-[11px] font-semibold text-amber-400/90 uppercase tracking-wider">
-                AD IN PROGRESS • COUNTDOWN RUNNING
+                AD IN PROGRESS • PLEASE WAIT
               </div>
             </div>
 
@@ -667,43 +677,21 @@ export const UnifiedRewardedAdModal: React.FC<UnifiedRewardedAdModalProps> = ({
               <div className="flex items-center justify-between text-xs pb-2 border-b border-slate-800">
                 <div className="flex items-center gap-1.5 font-bold text-amber-300">
                   <span className="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-ping shrink-0" />
-                  <span>
-                    {actionType === 'SPIN'
-                      ? (targetId === 2 || targetId === 5 ? 'Monetag' : targetId === 3 ? 'OnClickA' : 'RichAds')
-                      : actionType === 'GIFT_BOX'
-                      ? (targetId === 2 || targetId === 5 ? 'Monetag' : targetId === 3 ? 'OnClickA' : 'RichAds')
-                      : currentTier?.provider}{' '}
-                    Real Ad
-                  </span>
+                  <span>{currentTier?.provider} Real Ad</span>
                 </div>
                 <span className="px-2.5 py-0.5 rounded-full bg-slate-800 text-slate-300 font-mono text-[10px] font-semibold border border-slate-700">
-                  Zone:{' '}
-                  {actionType === 'SPIN'
-                    ? (targetId === 2 || targetId === 5 ? '12044377' : targetId === 3 ? '6153717E4F' : '410203')
-                    : actionType === 'GIFT_BOX'
-                    ? (targetId === 2 || targetId === 5 ? '12044377' : targetId === 3 ? '6153772E4F' : '410202')
-                    : currentTier?.id || 'Active'}
+                  Zone: {currentTier?.id || 'Active'}
                 </span>
               </div>
 
               {/* 100% In-App Sandboxed Ad Container - NO EXTERNAL REDIRECT */}
               <div className="w-full rounded-xl overflow-hidden border border-slate-800 bg-black">
                 {actionType === 'MINING' ? (
-                  <AdWaterfall house="mining" onAdLoaded={() => {}} />
+                  <AdInside adScript={getAdInsideScript(currentTier?.provider || 'RichAds', currentTier?.id || '410204')} />
                 ) : actionType === 'SPIN' ? (
-                  <AdInside
-                    adScript={getAdInsideScript(
-                      currentTier?.provider || (targetId === 2 || targetId === 5 ? 'Monetag' : targetId === 3 ? 'OnClickA' : 'RichAds'),
-                      currentTier?.id || (targetId === 2 || targetId === 5 ? '12044377' : targetId === 3 ? '6153717E4F' : '410203')
-                    )}
-                  />
+                  <AdInside adScript={getAdInsideScript(currentTier?.provider || 'RichAds', currentTier?.id || '410203')} />
                 ) : (
-                  <AdInside
-                    adScript={getAdInsideScript(
-                      currentTier?.provider || (targetId === 2 || targetId === 5 ? 'Monetag' : targetId === 3 ? 'OnClickA' : 'RichAds'),
-                      currentTier?.id || (targetId === 2 || targetId === 5 ? '12044377' : targetId === 3 ? '6153772E4F' : '410202')
-                    )}
-                  />
+                  <AdInside adScript={getAdInsideScript(currentTier?.provider || (targetId === 2 || targetId === 5 ? 'Monetag' : targetId === 3 ? 'OnClickA' : 'RichAds'), currentTier?.id || (targetId === 2 || targetId === 5 ? '12044377' : targetId === 3 ? '6153772E4F' : '410202'))} />
                 )}
               </div>
 
@@ -715,19 +703,19 @@ export const UnifiedRewardedAdModal: React.FC<UnifiedRewardedAdModalProps> = ({
                     <span>Watch Progress:</span>
                   </span>
                   <span className="font-mono font-bold text-amber-400 text-sm">
-                    {remainingSeconds > 0 ? `${remainingSeconds}s remaining` : 'Complete!'}
+                    Playing ad...
                   </span>
                 </div>
 
                 <div className="w-full bg-slate-950 rounded-full h-2.5 overflow-hidden border border-slate-800">
                   <div
-                    className="h-full bg-gradient-to-r from-amber-500 to-emerald-400 transition-all duration-300"
-                    style={{ width: `${progressPercent}%` }}
+                    className="h-full bg-gradient-to-r from-amber-500 to-emerald-400 transition-all duration-300 animate-pulse"
+                    style={{ width: '100%' }}
                   />
                 </div>
 
                 <p className="text-[10px] text-slate-400 text-center pt-0.5">
-                  Remain on screen. Switching tabs or exiting pauses the timer.
+                  Watch the full ad. Your reward is credited automatically when it ends.
                 </p>
               </div>
             </div>
