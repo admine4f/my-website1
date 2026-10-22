@@ -1,0 +1,2559 @@
+E4F WEB3 EXCHANGE - AD SYSTEM FIX (ALL-IN-ONE INSTRUCTION FILE)
+================================================================
+
+PROJECT: Telegram Mini App (E4F Web3 Exchange). MAIN PROBLEM TO FIX: the ads do not work correctly.
+Ad networks used: RichAds, Monetag, OnClickA (official integration details are already inside the code below).
+
+REQUIRED BEHAVIOR (the app already has the daily-limit / disable / UTC-reset logic - DO NOT change that logic):
+ 1. Every ad must play INSIDE the Telegram Mini App. It must NEVER redirect/open the user outside the app.
+ 2. The reward is given AUTOMATICALLY the moment the ad finishes. No waiting timer. If the ad was not shown, NO reward.
+ 3. GIFT BOX: 5 boxes per day. Box N uses ONLY the ad of slot N (Box 1 -> slot 1 ad, Box 2 -> slot 2 ad ... Box 5 -> slot 5 ad).
+    When that ad finishes the box opens automatically, the reward is given and that box becomes disabled
+    ("Claimed Today - Reset UTC 00:00"). Boxes 1 to 5 all work the same way.
+ 4. SPIN: 5 spins per day (counter shows 5 -> 4 -> 3 -> 2 -> 1 -> 0 remaining). Spin N uses ONLY the ad of slot N.
+    When that ad finishes the wheel spins automatically and the reward is given. After the 5th spin the spin button
+    is disabled until the next day at 00:00 UTC, then it becomes available again.
+ 5. MINING button: ad waterfall - if one network fails to show an ad, the next network is shown automatically.
+ 6. The existing daily limits, disabled states, counters, UTC reset, auto-spin and auto-open logic live in
+    SpinWheelModal.tsx, GiftBoxesModal.tsx and server.ts. Keep them EXACTLY as they are (only verify they still work).
+
+TASK FOR THE AI ASSISTANT (read carefully, follow exactly):
+
+You must update exactly 8 existing files and make 1 tiny edit in server.ts, using the content in this file.
+
+STRICT RULES:
+1. For each "REPLACE FILE" section below: replace the ENTIRE existing file at that path with the exact text between
+   the BEGIN and END lines. Copy it BYTE-FOR-BYTE. Do not modify, reformat, rename, refactor, shorten or "improve" anything.
+2. For the "EDIT server.ts" section: do a single find-and-replace exactly as written. Change nothing else in server.ts.
+3. Do NOT delete any existing file. Do NOT change any other file.
+4. 0% change to any UI, design, layout, wallet/balance logic, tasks, notices, features or any other system.
+5. All user-facing text must stay English.
+6. Do the work in the order given (FILE 1 to FILE 8, then server.ts). If you reach your output limit, stop after finishing
+   a complete file and tell me which file number you finished; I will say "continue" and you continue with the next file.
+7. When everything is finished, reply with a short checklist: which files were replaced and that server.ts was edited.
+
+############################################################
+REPLACE FILE 1 of 8:  index.html
+############################################################
+----- BEGIN -----
+<!doctype html>
+<html lang="en" class="dark">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+    <title>E4F Web3 Exchange</title>
+    <meta name="description" content="Professional Web3 Exchange & Telegram Mini App Ecosystem with E4F Mining, Rewards, Spot Wallet, and Real-Time Market Infrastructure." />
+    <meta property="og:title" content="E4F Web3 Exchange" />
+    <meta property="og:description" content="Mine • Earn • Trade • Grow - The Official E4F Web3 Exchange." />
+    <meta property="og:type" content="website" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <link rel="icon" type="image/jpeg" href="/e4f_coin.jpg" />
+    <!-- Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700;800;900&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <!-- Telegram WebApp Pre-Init & Version 8.0 Safety -->
+    <script>
+      (function() {
+        var origErr = console.error;
+        console.error = function() {
+          if (arguments[0] && typeof arguments[0] === 'string' && arguments[0].indexOf('CloudStorage is not supported') !== -1) {
+            return;
+          }
+          return origErr.apply(console, arguments);
+        };
+
+        try {
+          var h = window.location.hash || '';
+          var s = window.location.search || '';
+          if (h.indexOf('tgWebAppVersion=') === -1 && s.indexOf('tgWebAppVersion=') === -1) {
+            var prefix = h ? h + '&' : '#';
+            if (window.history && window.history.replaceState) {
+              window.history.replaceState(null, '', window.location.pathname + window.location.search + prefix + 'tgWebAppVersion=8.0&tgWebAppPlatform=android');
+            }
+          }
+        } catch (e) {}
+      })();
+    </script>
+    <!-- Telegram WebApp SDK -->
+    <script src="https://telegram.org/js/telegram-web-app.js"></script>
+    <script>
+      (function() {
+        try {
+          // 1. Immediate Telegram Viewport Initialization
+          if (window.Telegram && window.Telegram.WebApp) {
+            var tg = window.Telegram.WebApp;
+            try {
+              tg.isVersionAtLeast = function() { return true; };
+            } catch (e) {}
+            try {
+              Object.defineProperty(tg, 'version', {
+                get: function() { return '8.0'; },
+                set: function() {},
+                configurable: true
+              });
+            } catch (e) {
+              try { tg.version = '8.0'; } catch (e2) {}
+            }
+
+            try {
+              tg.isVersionAtLeast = function(ver) { return true; };
+            } catch (e) {}
+
+            var safeStorage = {
+              setItem: function(key, value, cb) {
+                try { localStorage.setItem('tg_cloud_' + key, String(value)); if (cb) cb(null, true); } catch (e) { if (cb) cb(e); }
+                return this;
+              },
+              getItem: function(key, cb) {
+                try { var val = localStorage.getItem('tg_cloud_' + key); if (cb) cb(null, val); } catch (e) { if (cb) cb(e); }
+                return this;
+              },
+              getItems: function(keys, cb) {
+                try {
+                  var res = {};
+                  (keys || []).forEach(function(k) { res[k] = localStorage.getItem('tg_cloud_' + k); });
+                  if (cb) cb(null, res);
+                } catch (e) { if (cb) cb(e); }
+                return this;
+              },
+              removeItem: function(key, cb) {
+                try { localStorage.removeItem('tg_cloud_' + key); if (cb) cb(null, true); } catch (e) { if (cb) cb(e); }
+                return this;
+              },
+              removeItems: function(keys, cb) {
+                try { (keys || []).forEach(function(k) { localStorage.removeItem('tg_cloud_' + k); }); if (cb) cb(null, true); } catch (e) { if (cb) cb(e); }
+                return this;
+              },
+              getKeys: function(cb) {
+                try {
+                  var keys = [];
+                  for (var i = 0; i < localStorage.length; i++) {
+                    var k = localStorage.key(i);
+                    if (k && k.indexOf('tg_cloud_') === 0) keys.push(k.replace('tg_cloud_', ''));
+                  }
+                  if (cb) cb(null, keys);
+                } catch (e) { if (cb) cb(e); }
+                return this;
+              }
+            };
+
+            try {
+              Object.defineProperty(tg, 'CloudStorage', {
+                get: function() { return safeStorage; },
+                set: function() {},
+                configurable: true
+              });
+            } catch (e) {
+              tg.CloudStorage = safeStorage;
+            }
+
+            try { tg.ready(); } catch (e) {}
+            try { tg.expand(); } catch (e) {}
+            try { if (tg.disableVerticalSwipes) tg.disableVerticalSwipes(); } catch (e) {}
+            try { if (tg.enableClosingConfirmation) tg.enableClosingConfirmation(); } catch (e) {}
+          }
+
+          // 2. Sync Launch Params to SessionStorage for Telegram Mini App SDKs
+          var fullHref = window.location.href || '';
+          var hash = window.location.hash || '';
+          var search = window.location.search || '';
+          var srcStr = (hash.indexOf('tgWebAppData=') !== -1) ? hash : ((search.indexOf('tgWebAppData=') !== -1) ? search : '');
+          var initData = '';
+          var platform = 'android';
+          var version = '8.0';
+          var theme = '{}';
+
+          if (srcStr) {
+            var clean = srcStr.replace(/^[#?]/, '');
+            var p = new URLSearchParams(clean);
+            initData = p.get('tgWebAppData') || '';
+            platform = p.get('tgWebAppPlatform') || platform;
+            version = p.get('tgWebAppVersion') || version;
+            theme = p.get('tgWebAppThemeParams') || theme;
+          } else if (window.Telegram && window.Telegram.WebApp && window.Telegram.WebApp.initData) {
+            initData = window.Telegram.WebApp.initData;
+            platform = window.Telegram.WebApp.platform || platform;
+            version = window.Telegram.WebApp.version || version;
+            try {
+              theme = JSON.stringify(window.Telegram.WebApp.themeParams || {});
+            } catch (e) {}
+          }
+
+          if (initData) {
+            var payload = JSON.stringify({
+              tgWebAppData: initData,
+              tgWebAppPlatform: platform,
+              tgWebAppVersion: version,
+              tgWebAppThemeParams: theme
+            });
+            sessionStorage.setItem('__telegram__initParams', payload);
+            sessionStorage.setItem('adsgram/launch-params', payload);
+            sessionStorage.setItem('telegram-apps/launch-params', payload);
+            sessionStorage.setItem('tapps/launchParams', payload);
+            sessionStorage.setItem('tma.js/launch-params', payload);
+
+            // Ensure window.location.hash retains tgWebAppData for Adsgram URL parser
+            if (!window.location.hash.includes('tgWebAppData=')) {
+              var newHash = 'tgWebAppData=' + encodeURIComponent(initData) + '&tgWebAppPlatform=' + encodeURIComponent(platform) + '&tgWebAppVersion=' + encodeURIComponent(version);
+              if (window.history && window.history.replaceState) {
+                window.history.replaceState(null, '', window.location.pathname + window.location.search + '#' + newHash);
+              }
+            }
+          }
+        } catch (err) {
+          console.warn('[TG Param Sync Warn]:', err);
+        }
+      })();
+    </script>
+    <!-- RichAds Telegram Mini App SDK (First Ad Tag) -->
+    <script src="https://richinfo.co/richpartners/telegram/js/tg-ob.js"></script>
+    <script>
+      try {
+        if (typeof TelegramAdsController !== 'undefined') {
+          window.TelegramAdsController = new TelegramAdsController();
+          window.TelegramAdsController.initialize({
+            pubId: "1025839",
+            appId: "9319",
+          });
+        }
+      } catch (e) {
+        console.warn('[RichAds Controller Init Warn]:', e);
+      }
+
+      // Global In-App RichAds Telegram Bridge (never opens an external browser).
+      // Uses ONLY the Interstitial Banner (rewarded, 10s video inside the Mini App) with the default parameter
+      // (false) so the creative is shown INSIDE the app and never jumps straight to an offer page.
+      // Resolves TRUE only when RichAds reports a successful ad interaction; FALSE for not-displayed / error.
+      window.showRichAdsInTelegram = function(richadsId) {
+        return new Promise(function(resolve) {
+          var finished = false;
+          function fin(v, why) {
+            if (finished) return;
+            finished = true;
+            console.log('[RichAds] result =', v, why || '');
+            resolve(v);
+          }
+          try {
+            var ctrl = window.TelegramAdsController;
+            if (!ctrl || typeof ctrl.triggerInterstitialBanner !== 'function') {
+              return fin(false, 'controller not ready');
+            }
+            var r = ctrl.triggerInterstitialBanner(false);
+            if (r && typeof r.then === 'function') {
+              r.then(function() { fin(true, 'ad completed'); }, function(err) { console.warn('[RichAds] not displayed:', err); fin(false, 'not displayed'); });
+            } else {
+              fin(false, 'unexpected sdk response');
+            }
+            setTimeout(function() { fin(false, 'timeout'); }, 180000);
+          } catch (e) {
+            console.error('RichAds invoke error:', e);
+            fin(false, 'exception');
+          }
+        });
+      };
+    </script>
+    <style>
+      /* RichAds in-app overlay styling: position:fixed, width 100%, height 100%, z-index 999999 */
+      #richads-overlay,
+      .richads-overlay,
+      div[class*="richpartners"],
+      div[id*="richpartners"],
+      div[class*="tg-ads"],
+      iframe[src*="richinfo.co"] {
+        position: fixed !important;
+        top: 0 !important;
+        left: 0 !important;
+        width: 100% !important;
+        height: 100% !important;
+        z-index: 999999 !important;
+      }
+    </style>
+    <!-- Monetag Telegram Mini App SDK (Zone 12044377) -->
+    <script src="https://libtl.com/sdk.js" data-zone="12044377" data-sdk="show_12044377"></script>
+    <!-- OnClickA TMA In-Stream Ad Manager (window.initCdTma) -->
+    <script src="https://js.onclckvd.com/in-stream-ad-admanager/tma.js"></script>
+    <script>
+      // In-App Monetag Telegram Bridge: Rewarded Interstitial (plays INSIDE the Mini App, never 'pop').
+      // ymid = our ad-session id (lets Monetag confirm the view to our server via postback).
+      // catchIfNoFeed:true = if Monetag has no ad, the promise REJECTS (so nobody is rewarded without an ad).
+      // Resolves TRUE only when Monetag confirms the ad was watched; FALSE for no-fill / error.
+      window.showMonetagInsideTelegram = function(ymid) {
+        return new Promise(function(resolve) {
+          var finished = false;
+          function fin(v) { if (!finished) { finished = true; resolve(v); } }
+          try {
+            var fn = window.show_12044377;
+            if (typeof fn !== 'function') { console.warn('[Monetag] SDK not ready'); return fin(false); }
+            var opts = { catchIfNoFeed: true };
+            if (ymid) opts.ymid = String(ymid);
+            var res = fn(opts);
+            if (res && typeof res.then === 'function') {
+              res.then(function() { fin(true); }).catch(function(err) { console.warn('[Monetag] no ad:', err); fin(false); });
+            } else {
+              fin(false);
+            }
+            setTimeout(function() { fin(false); }, 180000);
+          } catch (e) {
+            console.warn('[Monetag] error:', e);
+            fin(false);
+          }
+        });
+      };
+    </script>
+  </head>
+  <body class="bg-[#070B14] text-slate-100 antialiased selection:bg-amber-500/30 selection:text-amber-200 overflow-x-hidden min-h-screen">
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>
+
+
+----- END -----
+
+############################################################
+REPLACE FILE 2 of 8:  src/App.tsx
+############################################################
+----- BEGIN -----
+import React from 'react';
+import { AppProvider, useApp } from './context/AppContext';
+import { TopBar } from './components/common/TopBar';
+import { BottomNav } from './components/common/BottomNav';
+import { SplashScreen } from './components/common/SplashScreen';
+import { WelcomeBonusModal } from './components/common/WelcomeBonusModal';
+
+import { HomeView } from './components/home/HomeView';
+import { MiningView } from './components/mining/MiningView';
+import { MarketView } from './components/market/MarketView';
+import { TradeView } from './components/trade/TradeView';
+import { WalletView } from './components/wallet/WalletView';
+
+import { DepositModal } from './components/wallet/DepositModal';
+import { WithdrawModal } from './components/wallet/WithdrawModal';
+import { RewardsCenterModal } from './components/rewards/RewardsCenterModal';
+import { TasksModal } from './components/tasks/TasksModal';
+import { ReferralModal } from './components/referral/ReferralModal';
+import { SupportModal } from './components/support/SupportModal';
+import { AdminControlModal } from './components/admin/AdminControlModal';
+import { ProfileModal } from './components/common/ProfileModal';
+import { SpinWheelModal } from './components/rewards/SpinWheelModal';
+import { GiftBoxesModal } from './components/rewards/GiftBoxesModal';
+import { AccountCreationModal } from './components/common/AccountCreationModal';
+
+const AppContent: React.FC = () => {
+  const {
+    activeTab,
+    activeModal,
+    closeModal,
+    toasts,
+    removeToast,
+    showWelcomeBonus,
+    showAccountCreation,
+    pendingReferralCode,
+    creatingAccount,
+    confirmAccountCreation,
+    dismissAccountCreation,
+  } = useApp();
+
+  return (
+    <div className="min-h-screen bg-[#070B14] text-slate-100 font-sans flex flex-col selection:bg-amber-500 selection:text-slate-950">
+      <SplashScreen />
+
+      {/* Main Top Navigation Header */}
+      <TopBar />
+
+      {/* Active Tab View */}
+      <main className="flex-1 w-full max-w-md mx-auto pb-24">
+        {activeTab === 'home' && <HomeView />}
+        {activeTab === 'mining' && <MiningView />}
+        {activeTab === 'market' && <MarketView />}
+        {activeTab === 'trade' && <TradeView />}
+        {activeTab === 'wallet' && <WalletView />}
+      </main>
+
+      {/* Bottom Sticky Navigation */}
+      <BottomNav />
+
+      {/* Referral Onboarding Account Creation Popup */}
+      {showAccountCreation && (
+        <AccountCreationModal
+          referralCode={pendingReferralCode}
+          loading={creatingAccount}
+          onConfirm={confirmAccountCreation}
+          onDismiss={dismissAccountCreation}
+        />
+      )}
+
+      {/* Global Modals */}
+      {(showWelcomeBonus || activeModal === 'WELCOME' || activeModal === 'WELCOME_BONUS') && <WelcomeBonusModal />}
+      {activeModal === 'DEPOSIT' && <DepositModal onClose={closeModal} />}
+      {activeModal === 'WITHDRAW' && <WithdrawModal onClose={closeModal} />}
+      {activeModal === 'REWARDS' && <RewardsCenterModal onClose={closeModal} />}
+      {activeModal === 'TASKS' && <TasksModal onClose={closeModal} />}
+      {activeModal === 'REFERRAL' && <ReferralModal onClose={closeModal} />}
+      {activeModal === 'SUPPORT' && <SupportModal onClose={closeModal} />}
+      {activeModal === 'ADMIN' && <AdminControlModal onClose={closeModal} />}
+      {activeModal === 'PROFILE' && <ProfileModal onClose={closeModal} />}
+      {activeModal === 'GIFT_BOXES' && <GiftBoxesModal onClose={closeModal} />}
+      {activeModal === 'SPIN' && <SpinWheelModal onClose={closeModal} />}
+
+      {/* Toast Floating Notification Container */}
+      <div className="fixed top-4 right-4 z-50 flex flex-col gap-2 max-w-xs pointer-events-none">
+        {toasts.map(toast => (
+          <div
+            key={toast.id}
+            onClick={() => removeToast(toast.id)}
+            className={`pointer-events-auto p-3.5 rounded-2xl shadow-2xl border text-xs cursor-pointer transition-all animate-in fade-in slide-in-from-top duration-200 ${
+              toast.type === 'success'
+                ? 'bg-[#0B1E1B] border-emerald-500/50 text-emerald-300'
+                : toast.type === 'error'
+                ? 'bg-[#251015] border-rose-500/50 text-rose-300'
+                : 'bg-[#101A2E] border-sky-500/50 text-sky-300'
+            }`}
+          >
+            <div className="font-bold text-white mb-0.5">{toast.title}</div>
+            <div className="text-[11px] opacity-90">{toast.message}</div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+};
+
+declare global {
+  interface Window {
+    showMonetagInsideTelegram?: () => Promise<boolean>;
+    showRichAdsInTelegram?: (richadsId?: string | number) => Promise<boolean>;
+    TelegramAdsController?: any;
+  }
+}
+
+// NOTE: window.showMonetagInsideTelegram and window.showRichAdsInTelegram are defined ONLY in index.html.
+// (Previous duplicates here overwrote them and reported success without showing any ad.)
+
+import { initAllTmaAds } from './components/TmaAdManager';
+import { blockExternalRedirect } from './services/antiFakeAds';
+
+export default function App() {
+  React.useEffect(() => {
+    blockExternalRedirect();
+    initAllTmaAds();
+  }, []);
+
+  return (
+    <AppProvider>
+      <AppContent />
+    </AppProvider>
+  );
+}
+
+----- END -----
+
+############################################################
+REPLACE FILE 3 of 8:  src/components/AdInside.tsx
+############################################################
+----- BEGIN -----
+import { useEffect, useRef } from 'react';
+import { beginAdRedirectGuard, endAdRedirectGuard, blockExternalRedirect } from '../services/antiFakeAds';
+
+export default function AdInside({ adScript }: { adScript: string }) {
+  const ref = useRef<HTMLDivElement>(null);
+  
+  useEffect(() => {
+    // Block external navigation ONLY while this ad container is on screen (scoped guard)
+    blockExternalRedirect();
+    beginAdRedirectGuard();
+
+    if (ref.current) {
+      ref.current.innerHTML = '';
+      const iframe = document.createElement('iframe');
+      iframe.sandbox.add('allow-scripts', 'allow-same-origin', 'allow-forms');
+      // IMPORTANT: NO allow-top-navigation, NO allow-popups
+      iframe.style.width = '100%';
+      iframe.style.height = '400px';
+      iframe.style.border = '0';
+      iframe.srcdoc = `
+        <html><body style="margin:0">
+        <script>
+          window.open = () => null;
+          window.top = window.self;
+        </script>
+        ${adScript}
+        </body></html>
+      `;
+      ref.current.appendChild(iframe);
+    }
+    
+    // Remove all _blank
+    const obs = new MutationObserver(() => {
+      document.querySelectorAll('a[target="_blank"]').forEach((a: any) => {
+        a.setAttribute('target','_self');
+        a.addEventListener('click', (e: any) => {
+          e.preventDefault();
+          e.stopPropagation();
+        });
+      });
+    });
+    obs.observe(document.body, { childList: true, subtree: true });
+    
+    return () => { obs.disconnect(); endAdRedirectGuard(); };
+  }, [adScript]);
+  
+  return <div ref={ref} style={{width:'100%', minHeight:'400px'}} />;
+}
+
+----- END -----
+
+############################################################
+REPLACE FILE 4 of 8:  src/components/TmaAdManager.ts
+############################################################
+----- BEGIN -----
+// Official OnClickA TMA In-Stream Ad Manager for Telegram Mini Apps
+
+declare global {
+  interface Window {
+    initCdTma?: (config: { id: string }) => Promise<() => Promise<void>>;
+  }
+}
+
+export const TMA_SPOTS: Record<string, string> = {
+  MINING: "6153774E4F",  // 468588 Bonus - Mining
+  GIFTBOX: "6153772E4F", // 468586 TASK - Gift Box
+  SPIN: "6153717E4F"     // 468529 Reward - Spin
+};
+
+export function getFixedId(id: string | number | undefined): string {
+  if (!id) return '';
+  const str = String(id).trim();
+  if (str === "6153774") return "6153774E4F";
+  if (str === "6153772") return "6153772E4F";
+  if (str === "6153717") return "6153717E4F";
+  return str;
+}
+
+let tmaShowMethods: Record<string, () => Promise<void>> = {};
+
+export function initAllTmaAds() {
+  if (typeof window === 'undefined' || !window.initCdTma) return;
+  Object.entries(TMA_SPOTS).forEach(([key, rawId]) => {
+    const id = getFixedId(rawId);
+    window.initCdTma!({ id })
+      .then((show: () => Promise<void>) => {
+        tmaShowMethods[key] = show;
+        console.log(`TMA ${key} ready: ${id}`);
+      })
+      .catch((e: any) => console.log(`TMA ${key} error:`, e));
+  });
+}
+
+export async function showTmaAd(type: 'MINING' | 'GIFTBOX' | 'SPIN' | string): Promise<boolean> {
+  // type = MINING, GIFTBOX, SPIN
+  const normKey = type.toUpperCase().includes('BOX')
+    ? 'GIFTBOX'
+    : type.toUpperCase().includes('SPIN')
+    ? 'SPIN'
+    : 'MINING';
+
+  const showMethod = tmaShowMethods[normKey] || tmaShowMethods[type];
+  if (!showMethod) {
+    // If not pre-cached, attempt on-demand init if window.initCdTma is available
+    if (typeof window !== 'undefined' && window.initCdTma) {
+      try {
+        const spotId = getFixedId(TMA_SPOTS[normKey] || TMA_SPOTS.MINING);
+        const show = await window.initCdTma({ id: spotId });
+        tmaShowMethods[normKey] = show;
+        await show(); // This plays INSIDE Telegram, not external
+        return true;
+      } catch (err) {
+        console.warn(`[TMA OnClickA on-demand error]:`, err);
+        throw new Error("Ad not ready, try waterfall fallback");
+      }
+    }
+    throw new Error("Ad not ready, try waterfall fallback");
+  }
+
+  await showMethod(); // This plays INSIDE Telegram, not external
+  return true;
+}
+
+// ---- OnClickA: exact Spot ID from Admin panel (per-ID cached init) ----
+const tmaInitById: Record<string, Promise<() => Promise<void>>> = {};
+
+function getTmaShowById(rawId: string): Promise<() => Promise<void>> {
+  const id = getFixedId(rawId);
+  if (!id) return Promise.reject(new Error('OnClickA id missing'));
+  if (typeof window === 'undefined' || !window.initCdTma) return Promise.reject(new Error('OnClickA SDK not loaded'));
+  // Reuse the method already prepared by initAllTmaAds() at app start (avoids initializing the same spot twice)
+  for (const k of Object.keys(TMA_SPOTS)) {
+    if (getFixedId(TMA_SPOTS[k]) === id && tmaShowMethods[k]) return Promise.resolve(tmaShowMethods[k]);
+  }
+  if (!tmaInitById[id]) {
+    tmaInitById[id] = Promise.resolve(window.initCdTma({ id })).then((show: any) => {
+      if (typeof show !== 'function') throw new Error('OnClickA show method missing');
+      return show as () => Promise<void>;
+    });
+    tmaInitById[id].catch(() => { delete tmaInitById[id]; }); // allow a fresh init next time
+  }
+  return tmaInitById[id];
+}
+
+/** Warm up the spot so the ad can start instantly on the user's tap. Safe to call many times. */
+export function preloadTmaAdById(rawId: string): void {
+  getTmaShowById(rawId).catch(() => {});
+}
+
+/** Show the OnClickA rewarded video INSIDE Telegram. Resolves only when the ad was shown successfully. */
+export async function showTmaAdById(rawId: string): Promise<boolean> {
+  const show = await getTmaShowById(rawId);
+  await show();
+  return true;
+}
+
+----- END -----
+
+############################################################
+REPLACE FILE 5 of 8:  src/components/TmaAdManager.js
+############################################################
+----- BEGIN -----
+// Official OnClickA TMA In-Stream Ad Manager for Telegram Mini Apps
+
+export const TMA_SPOTS = {
+  MINING: "6153774E4F",  // 468588 Bonus - Mining
+  GIFTBOX: "6153772E4F", // 468586 TASK - Gift Box
+  SPIN: "6153717E4F"     // 468529 Reward - Spin
+};
+
+export function getFixedId(id) {
+  if (!id) return id;
+  const str = String(id).trim();
+  if (str === "6153774") return "6153774E4F";
+  if (str === "6153772") return "6153772E4F";
+  if (str === "6153717") return "6153717E4F";
+  return str;
+}
+
+let tmaShowMethods = {};
+
+export function initAllTmaAds() {
+  if (typeof window === 'undefined' || !window.initCdTma) return;
+  Object.entries(TMA_SPOTS).forEach(([key, rawId]) => {
+    const id = getFixedId(rawId);
+    window.initCdTma({ id })
+      .then(show => {
+        tmaShowMethods[key] = show;
+        console.log(`TMA ${key} ready: ${id}`);
+      })
+      .catch(e => console.log(`TMA ${key} error:`, e));
+  });
+}
+
+export async function showTmaAd(type) {
+  // type = MINING, GIFTBOX, SPIN
+  const normKey = String(type || '').toUpperCase().includes('BOX')
+    ? 'GIFTBOX'
+    : String(type || '').toUpperCase().includes('SPIN')
+    ? 'SPIN'
+    : 'MINING';
+
+  const showMethod = tmaShowMethods[normKey] || tmaShowMethods[type];
+  if (!showMethod) {
+    if (typeof window !== 'undefined' && window.initCdTma) {
+      try {
+        const spotId = getFixedId(TMA_SPOTS[normKey] || TMA_SPOTS.MINING);
+        const show = await window.initCdTma({ id: spotId });
+        tmaShowMethods[normKey] = show;
+        await show();
+        return true;
+      } catch (err) {
+        throw new Error("Ad not ready, try waterfall fallback");
+      }
+    }
+    throw new Error("Ad not ready, try waterfall fallback");
+  }
+  await showMethod(); // This plays INSIDE Telegram, not external
+  return true;
+}
+
+// ---- OnClickA: exact Spot ID from Admin panel (per-ID cached init) ----
+const tmaInitById = {};
+
+function getTmaShowById(rawId) {
+  const id = getFixedId(rawId);
+  if (!id) return Promise.reject(new Error('OnClickA id missing'));
+  if (typeof window === 'undefined' || !window.initCdTma) return Promise.reject(new Error('OnClickA SDK not loaded'));
+  // Reuse the method already prepared by initAllTmaAds() at app start (avoids initializing the same spot twice)
+  for (const k of Object.keys(TMA_SPOTS)) {
+    if (getFixedId(TMA_SPOTS[k]) === id && tmaShowMethods[k]) return Promise.resolve(tmaShowMethods[k]);
+  }
+  if (!tmaInitById[id]) {
+    tmaInitById[id] = Promise.resolve(window.initCdTma({ id })).then((show) => {
+      if (typeof show !== 'function') throw new Error('OnClickA show method missing');
+      return show;
+    });
+    tmaInitById[id].catch(() => { delete tmaInitById[id]; }); // allow a fresh init next time
+  }
+  return tmaInitById[id];
+}
+
+/** Warm up the spot so the ad can start instantly on the user's tap. Safe to call many times. */
+export function preloadTmaAdById(rawId) {
+  getTmaShowById(rawId).catch(() => {});
+}
+
+/** Show the OnClickA rewarded video INSIDE Telegram. Resolves only when the ad was shown successfully. */
+export async function showTmaAdById(rawId) {
+  const show = await getTmaShowById(rawId);
+  await show();
+  return true;
+}
+
+----- END -----
+
+############################################################
+REPLACE FILE 6 of 8:  src/services/adWaterfall.ts
+############################################################
+----- BEGIN -----
+// =========================================================================
+// 🎯 WATERFALL AD CONFIGURATION (5 TIERS: RichAds -> Monetag -> OnClickA -> RichAds -> Monetag)
+// Adsgram and Adexora have been completely replaced with RichAds and Monetag.
+// 4-Second Failover Timeout with Infinite Loop (Never Empty)
+// =========================================================================
+
+// Spin 1-5 Waterfall IDs
+export let spin_01_richads = '410203';
+export let spin_02_monetag = '12044377';
+export let spin_03_onclicka = '6153717E4F';
+export let spin_04_richads = '410203';
+export let spin_05_monetag = '12044377';
+
+// Gift Box 1-5 Waterfall IDs
+export let box_01_richads = '410202';
+export let box_02_monetag = '12044377';
+export let box_03_onclicka = '6153772E4F';
+export let box_04_richads = '410202';
+export let box_05_monetag = '12044377';
+
+// Mining 1-5 Waterfall IDs
+export let mining_01_richads = '410204';
+export let mining_02_monetag = '12044377';
+export let mining_03_onclicka = '6153774E4F';
+export let mining_04_richads = '410204';
+export let mining_05_monetag = '12044377';
+
+export const RICHADS_PLACEMENTS = ['410202', '410203', '410204', '410260', '410261'];
+
+export interface WaterfallTier {
+  index: number;
+  provider: 'RichAds' | 'Monetag' | 'OnClickA';
+  id: string;
+  label: string;
+  placementKey?: string;
+}
+
+export interface WaterfallResult {
+  success: boolean;
+  completedTier?: WaterfallTier;
+  allFailed?: boolean;
+  message?: string;
+  error?: string;
+}
+
+// Helper: Dynamically fetch & sync updated IDs from Admin Control Panel / Backend
+export async function syncWaterfallSettings(): Promise<{
+  spin: WaterfallTier[];
+  box: WaterfallTier[];
+}> {
+  try {
+    const res = await fetch('/api/system/public-settings');
+    if (!res.ok) throw new Error('Settings not ok');
+    const data = await res.json();
+    const cleanId = (v: any) => typeof v === 'string' && !/^(spin|box|mining)_[0-9a-z_]+$/i.test(v.trim());
+    if (cleanId(data.spin_01_richads)) spin_01_richads = data.spin_01_richads;
+    if (cleanId(data.spin_02_monetag)) spin_02_monetag = data.spin_02_monetag;
+    if (cleanId(data.spin_03_onclicka)) spin_03_onclicka = data.spin_03_onclicka;
+    if (cleanId(data.spin_04_richads)) spin_04_richads = data.spin_04_richads;
+    if (cleanId(data.spin_05_monetag)) spin_05_monetag = data.spin_05_monetag;
+
+    if (cleanId(data.box_01_richads)) box_01_richads = data.box_01_richads;
+    if (cleanId(data.box_02_monetag)) box_02_monetag = data.box_02_monetag;
+    if (cleanId(data.box_03_onclicka)) box_03_onclicka = data.box_03_onclicka;
+    if (cleanId(data.box_04_richads)) box_04_richads = data.box_04_richads;
+    if (cleanId(data.box_05_monetag)) box_05_monetag = data.box_05_monetag;
+
+    if (cleanId(data.mining_01_richads)) mining_01_richads = data.mining_01_richads;
+    if (cleanId(data.mining_02_monetag)) mining_02_monetag = data.mining_02_monetag;
+    if (cleanId(data.mining_03_onclicka)) mining_03_onclicka = data.mining_03_onclicka;
+    if (cleanId(data.mining_04_richads)) mining_04_richads = data.mining_04_richads;
+    if (cleanId(data.mining_05_monetag)) mining_05_monetag = data.mining_05_monetag;
+  } catch (e) {
+    console.warn('Could not sync waterfall settings from server, using local defaults:', e);
+  }
+
+  return {
+    spin: getSpinWaterfallTiers(),
+    box: getBoxWaterfallTiers(),
+  };
+}
+
+// Spin 1-5 Dedicated Ads (Waterfall Logic Removed: Each Spin Has Dedicated Ad)
+export function getSpinWaterfallTiers(targetSpinNumber?: number): WaterfallTier[] {
+  const num = Math.max(1, Math.min(5, Number(targetSpinNumber) || 1));
+  const spinMap: Record<number, WaterfallTier> = {
+    1: { index: 1, provider: 'RichAds', id: spin_01_richads || '410203', label: 'RichAds (Spin 1)' },
+    2: { index: 1, provider: 'Monetag', id: spin_02_monetag || '12044377', label: 'Monetag (Spin 2)' },
+    3: { index: 1, provider: 'OnClickA', id: spin_03_onclicka || '6153717E4F', label: 'OnClickA (Spin 3)' },
+    4: { index: 1, provider: 'RichAds', id: spin_04_richads || '410203', label: 'RichAds (Spin 4)' },
+    5: { index: 1, provider: 'Monetag', id: spin_05_monetag || '12044377', label: 'Monetag (Spin 5)' },
+  };
+  return [spinMap[num] || spinMap[1]];
+}
+
+// Gift Box 1-5 Dedicated Ads (Waterfall Logic Removed: Box Number = Dedicated Network)
+// Box 1 -> RichAds (410202)
+// Box 2 -> Monetag (12044377)
+// Box 3 -> OnClickA (6153772E4F)
+// Box 4 -> RichAds (410202)
+// Box 5 -> Monetag (12044377)
+export function getBoxWaterfallTiers(targetBoxNumber?: number): WaterfallTier[] {
+  const num = Math.max(1, Math.min(5, Number(targetBoxNumber) || 1));
+  const boxMap: Record<number, WaterfallTier> = {
+    1: { index: 1, provider: 'RichAds', id: box_01_richads || '410202', label: 'RichAds (Box 1)' },
+    2: { index: 1, provider: 'Monetag', id: box_02_monetag || '12044377', label: 'Monetag (Box 2)' },
+    3: { index: 1, provider: 'OnClickA', id: box_03_onclicka || '6153772E4F', label: 'OnClickA (Box 3)' },
+    4: { index: 1, provider: 'RichAds', id: box_04_richads || '410202', label: 'RichAds (Box 4)' },
+    5: { index: 1, provider: 'Monetag', id: box_05_monetag || '12044377', label: 'Monetag (Box 5)' },
+  };
+  return [boxMap[num] || boxMap[1]];
+}
+
+export function getMiningWaterfallTiers(): WaterfallTier[] {
+  return [
+    { index: 1, provider: 'RichAds', id: mining_01_richads, label: 'RichAds (Primary)' },
+    { index: 2, provider: 'Monetag', id: mining_02_monetag, label: 'Monetag (Tier 2)' },
+    { index: 3, provider: 'OnClickA', id: mining_03_onclicka, label: 'OnClickA (Tier 3)' },
+    { index: 4, provider: 'RichAds', id: mining_04_richads, label: 'RichAds (Tier 4)' },
+    { index: 5, provider: 'Monetag', id: mining_05_monetag, label: 'Monetag (Tier 5)' },
+  ];
+}
+
+import { ensureMonetagSdkLoaded, showMonetagAd as sdkShowMonetagAd } from './monetagSdk';
+
+export function getRichadsAdUrl(zoneId: string): string {
+  const clean = String(zoneId || '410202').trim();
+  if (clean.startsWith('http://') || clean.startsWith('https://')) return clean;
+  return `https://richinfo.co/delivery/site/${clean}`;
+}
+
+export function getMonetagAdUrl(zoneId: string): string {
+  const clean = String(zoneId || '12044377').trim();
+  if (clean.startsWith('http://') || clean.startsWith('https://')) return clean;
+  return `https://alwingulla.com/88/${clean}`;
+}
+
+export function getOnclickaAdUrl(zoneId: string): string {
+  const clean = String(zoneId || '6153772').trim();
+  if (clean.startsWith('http://') || clean.startsWith('https://')) return clean;
+  return `https://onclicka.com/delivery/site/${clean}`;
+}
+
+export function getProviderAdUrl(provider: 'RichAds' | 'Monetag' | 'OnClickA', zoneId: string): string {
+  if (provider === 'RichAds') return getRichadsAdUrl(zoneId);
+  if (provider === 'Monetag') return getMonetagAdUrl(zoneId);
+  if (provider === 'OnClickA') return getOnclickaAdUrl(zoneId);
+  return getMonetagAdUrl(zoneId);
+}
+
+/**
+ * Opens sponsor ad externally via Telegram WebApp or browser window.
+ * Eliminates iframe AccessDenied, ERR_BLOCKED_BY_RESPONSE, and raw code errors.
+ */
+export function openExternalSponsorAd(url: string) {
+  if (!url || typeof window === 'undefined') return;
+  // 100% inside Telegram Mini App - external redirect blocked
+  console.log('[openExternalSponsorAd] Displayed in-app inside Telegram Mini App:', url);
+}
+
+// =========================================================================
+// 3 DEDICATED REAL AD HANDLERS (RichAds, Monetag, OnClickA)
+// =========================================================================
+
+/**
+ * 1. RichAds (Slot 1 & 4) - plays INSIDE Telegram via window.showRichAdsInTelegram (defined in index.html).
+ * success = true ONLY when the ad was really shown and completed.
+ */
+export async function showRichadsAd(
+  zoneId: string,
+  _timeoutMs: number = 0
+): Promise<{ success: boolean; completed: boolean; adUrl: string; reason?: string }> {
+  const cleanId = String(zoneId || '410204').trim();
+  const adUrl = getRichadsAdUrl(cleanId);
+  try {
+    const fn = typeof window !== 'undefined' ? (window as any).showRichAdsInTelegram : undefined;
+    if (typeof fn !== 'function') return { success: false, completed: false, adUrl, reason: 'RichAds SDK not ready' };
+    const ok = await fn(cleanId);
+    return ok
+      ? { success: true, completed: true, adUrl }
+      : { success: false, completed: false, adUrl, reason: 'RichAds ad was not completed' };
+  } catch (err: any) {
+    console.warn('[RichAds Error]:', err);
+    return { success: false, completed: false, adUrl, reason: err?.message || 'RichAds failed' };
+  }
+}
+
+/**
+ * 2. Monetag (Slot 2 & 5) - Rewarded Interstitial INSIDE Telegram (never the 'pop' format that opens a new tab).
+ * success = true ONLY when Monetag confirms the ad was watched.
+ */
+export async function showMonetagAd(
+  zoneId: string,
+  _timeoutMs: number = 0,
+  ymid?: string
+): Promise<{ success: boolean; completed: boolean; adUrl: string; reason?: string }> {
+  const cleanId = String(zoneId || '12044377').trim();
+  const adUrl = getMonetagAdUrl(cleanId);
+  try {
+    if (typeof window !== 'undefined') {
+      if (typeof (window as any).showMonetagInsideTelegram === 'function') {
+        const ok = await (window as any).showMonetagInsideTelegram(ymid);
+        return ok
+          ? { success: true, completed: true, adUrl }
+          : { success: false, completed: false, adUrl, reason: 'Monetag ad was not completed' };
+      }
+      const showFn = (window as any).show_12044377;
+      if (typeof showFn === 'function') {
+        await showFn(ymid ? { ymid: String(ymid), catchIfNoFeed: true } : { catchIfNoFeed: true });
+        return { success: true, completed: true, adUrl };
+      }
+    }
+    return { success: false, completed: false, adUrl, reason: 'Monetag SDK not ready' };
+  } catch (err: any) {
+    console.warn('[Monetag Error]:', err?.message || err);
+    return { success: false, completed: false, adUrl, reason: err?.message || 'Monetag failed' };
+  }
+}
+
+import { showTmaAdById } from '../components/TmaAdManager';
+
+/**
+ * 3. OnClickA (Slot 3) - in-stream TMA rewarded ad INSIDE Telegram using the exact ID saved in the Admin panel.
+ */
+export async function showOnclickaAd(
+  zoneId: string,
+  _timeoutMs: number = 0
+): Promise<{ success: boolean; completed: boolean; adUrl: string; reason?: string }> {
+  const cleanId = String(zoneId || '6153772').trim();
+  const adUrl = getOnclickaAdUrl(cleanId);
+  try {
+    await showTmaAdById(cleanId);
+    return { success: true, completed: true, adUrl };
+  } catch (err: any) {
+    console.warn('[OnClickA ad failed]:', err);
+    return { success: false, completed: false, adUrl, reason: err?.message || 'OnClickA failed' };
+  }
+}
+
+// =========================================================================
+// HOUSE AD CONFIGURATION: DEDICATED ADS FOR BOX & SPIN (NO WATERFALL)
+// WATERFALL LOGIC ACTIVE EXCLUSIVELY ON MINING!
+// =========================================================================
+
+export const WATERFALL = {
+  box1: [
+    { network: 'richads', tag: '410202', code: '<script src="https://richinfo.co/richpartners/telegram/js/tg-ob.js?pubId=1025839&appId=9319"></script><script>try{window.TelegramAdsController && window.TelegramAdsController.showRewardedAd(410202);}catch(e){}</script><div style="padding:24px;text-align:center;color:#fff;font-family:sans-serif;"><h3>RichAds In-App Sponsor</h3><p>Zone: 410202</p></div>' },
+  ],
+  box2: [
+    { network: 'monetag', tag: '12044377', code: '<script src="https://libtl.com/sdk.js" data-zone="12044377" data-sdk="show_12044377"></script><script>try{window.show_12044377 && window.show_12044377();}catch(e){}</script><div style="padding:24px;text-align:center;color:#fff;font-family:sans-serif;"><h3>Monetag In-App Sponsor</h3><p>Zone: 12044377</p></div>' },
+  ],
+  box3: [
+    { network: 'onclicka', tag: '6153772E4F', code: '<iframe src="https://highperformanceformat.com/6153772E4F" style="width:100%;height:380px;border:none;"></iframe>' },
+  ],
+  box4: [
+    { network: 'richads', tag: '410202', code: '<script src="https://richinfo.co/richpartners/telegram/js/tg-ob.js?pubId=1025839&appId=9319"></script><script>try{window.TelegramAdsController && window.TelegramAdsController.showRewardedAd(410202);}catch(e){}</script><div style="padding:24px;text-align:center;color:#fff;font-family:sans-serif;"><h3>RichAds In-App Sponsor</h3><p>Zone: 410202</p></div>' },
+  ],
+  box5: [
+    { network: 'monetag', tag: '12044377', code: '<script src="https://libtl.com/sdk.js" data-zone="12044377" data-sdk="show_12044377"></script><script>try{window.show_12044377 && window.show_12044377();}catch(e){}</script><div style="padding:24px;text-align:center;color:#fff;font-family:sans-serif;"><h3>Monetag In-App Sponsor</h3><p>Zone: 12044377</p></div>' },
+  ],
+  spin: [
+    { network: 'richads', tag: '410203', code: '<script src="https://richinfo.co/richpartners/telegram/js/tg-ob.js?pubId=1025839&appId=9319"></script><script>try{window.TelegramAdsController && window.TelegramAdsController.showRewardedAd(410203);}catch(e){}</script><div style="padding:24px;text-align:center;color:#fff;font-family:sans-serif;"><h3>RichAds In-App Sponsor</h3><p>Zone: 410203</p></div>' },
+  ],
+  mining: [
+    { network: 'richads', tag: '410204', code: '<script src="https://richinfo.co/richpartners/telegram/js/tg-ob.js?pubId=1025839&appId=9319"></script><script>try{window.TelegramAdsController && window.TelegramAdsController.showRewardedAd(410204);}catch(e){}</script><div style="padding:24px;text-align:center;color:#fff;font-family:sans-serif;"><h3>RichAds In-App Sponsor</h3><p>Zone: 410204</p></div>' },
+    { network: 'monetag', tag: '12044377', code: '<script src="https://libtl.com/sdk.js" data-zone="12044377" data-sdk="show_12044377"></script><script>try{window.show_12044377 && window.show_12044377();}catch(e){}</script><div style="padding:24px;text-align:center;color:#fff;font-family:sans-serif;"><h3>Monetag In-App Sponsor</h3><p>Zone: 12044377</p></div>' },
+    { network: 'onclicka', tag: '6153774E4F', code: '<iframe src="https://highperformanceformat.com/6153774E4F" style="width:100%;height:380px;border:none;"></iframe>' },
+    { network: 'richads', tag: '410204', code: '<script src="https://richinfo.co/richpartners/telegram/js/tg-ob.js?pubId=1025839&appId=9319"></script><script>try{window.TelegramAdsController && window.TelegramAdsController.showRewardedAd(410204);}catch(e){}</script><div style="padding:24px;text-align:center;color:#fff;font-family:sans-serif;"><h3>RichAds In-App Sponsor</h3><p>Zone: 410204</p></div>' },
+    { network: 'monetag', tag: '12044377', code: '<script src="https://libtl.com/sdk.js" data-zone="12044377" data-sdk="show_12044377"></script><script>try{window.show_12044377 && window.show_12044377();}catch(e){}</script><div style="padding:24px;text-align:center;color:#fff;font-family:sans-serif;"><h3>Monetag In-App Sponsor</h3><p>Zone: 12044377</p></div>' },
+  ]
+};
+
+export type HouseType = 'box1' | 'box2' | 'box3' | 'box4' | 'box5' | 'spin' | 'mining';
+
+export function getAdForHouse(house: HouseType | string, attempt: number) {
+  const list = (WATERFALL as any)[house] || WATERFALL.mining;
+  if (house !== 'mining') {
+    return list[0]; // ONLY dedicated ad for box1..box5 & spin (NO waterfall!)
+  }
+  return list[attempt % list.length] || list[0]; // Waterfall rotation ONLY for mining!
+}
+
+
+----- END -----
+
+############################################################
+REPLACE FILE 7 of 8:  src/services/antiFakeAds.ts
+############################################################
+----- BEGIN -----
+// =========================================================================
+// E4F MINING - 100% IN-APP AD ENGINE & ANTI-FAKE SECURITY
+// =========================================================================
+
+import { supabaseClient } from './api';
+
+let adStartTime = Date.now();
+export function generateAdToken() {
+  adStartTime = Date.now();
+  try {
+    localStorage.setItem('e4f_ad_start', adStartTime.toString());
+  } catch (e) {}
+  return 'e4f_'+Date.now();
+}
+export function verifyAdWatch() {
+  const s = (typeof localStorage !== 'undefined') ? localStorage.getItem('e4f_ad_start') : null;
+  const start = s ? parseInt(s, 10) : adStartTime;
+  const watched = (Date.now() - start) / 1000;
+  if (watched < 25) return { valid:false, reason: 'Fake Report! Watch 30s - You watched '+Math.floor(watched)+'s' };
+  return { valid:true };
+}
+// Redirect guard: external navigation is blocked ONLY while an ad is playing.
+// (Old version replaced window.open with a dead function for the whole session, which broke ad SDKs and other links.)
+let adGuardDepth = 0;
+let adGuardInstalled = false;
+export function beginAdRedirectGuard() { adGuardDepth++; }
+export function endAdRedirectGuard() { adGuardDepth = Math.max(0, adGuardDepth - 1); }
+export function blockExternalRedirect() {
+  if (adGuardInstalled || typeof window === 'undefined') return;
+  adGuardInstalled = true;
+  try {
+    const origOpen = window.open.bind(window);
+    (window as any).open = (...args: any[]) => {
+      if (adGuardDepth > 0) { console.warn('[AdGuard] blocked window.open during ad'); return null; }
+      return (origOpen as any)(...args);
+    };
+  } catch (e) {}
+  try {
+    const wa = (window as any).Telegram?.WebApp;
+    if (wa) {
+      ['openLink', 'openTelegramLink'].forEach((fnName) => {
+        const orig = wa[fnName];
+        if (typeof orig === 'function') {
+          wa[fnName] = function (...a: any[]) {
+            if (adGuardDepth > 0) { console.warn('[AdGuard] blocked ' + fnName + ' during ad'); return; }
+            return orig.apply(wa, a);
+          };
+        }
+      });
+    }
+  } catch (e) {}
+  if (typeof document !== 'undefined') {
+    try {
+      document.addEventListener('click', (e) => {
+        if (adGuardDepth <= 0) return;
+        const el = e.target as HTMLElement;
+        const a = el?.closest ? (el.closest('a') as HTMLAnchorElement) : null;
+        if (a && a.target === '_blank') {
+          e.preventDefault();
+          a.setAttribute('target', '_self');
+        }
+      }, true);
+    } catch (e) {}
+  }
+}
+
+// -------------------------------------------------------------------------
+// WATERFALL CONFIGURATION (Box 1-5, Spin 5/5-1/5, Mining)
+// -------------------------------------------------------------------------
+
+export const AD_CONFIG = {
+  MINING: [
+    { network: 'richads' as const, id: '410204' },
+    { network: 'monetag' as const, id: '12044377' },
+    { network: 'onclicka' as const, id: '6153774E4F' },
+    { network: 'richads' as const, id: '410204' },
+    { network: 'monetag' as const, id: '12044377' },
+  ],
+  SPIN: {
+    '5/5': [
+      { network: 'richads' as const, id: '410203' },
+      { network: 'monetag' as const, id: '12044377' },
+      { network: 'onclicka' as const, id: '6153717E4F' },
+      { network: 'richads' as const, id: '410203' },
+      { network: 'monetag' as const, id: '12044377' },
+    ],
+    '4/5': [
+      { network: 'monetag' as const, id: '12044377' },
+      { network: 'onclicka' as const, id: '6153717E4F' },
+      { network: 'richads' as const, id: '410203' },
+      { network: 'monetag' as const, id: '12044377' },
+      { network: 'richads' as const, id: '410203' },
+    ],
+    '3/5': [
+      { network: 'onclicka' as const, id: '6153717E4F' },
+      { network: 'richads' as const, id: '410203' },
+      { network: 'monetag' as const, id: '12044377' },
+      { network: 'richads' as const, id: '410203' },
+      { network: 'monetag' as const, id: '12044377' },
+    ],
+    '2/5': [
+      { network: 'richads' as const, id: '410203' },
+      { network: 'monetag' as const, id: '12044377' },
+      { network: 'richads' as const, id: '410203' },
+      { network: 'monetag' as const, id: '12044377' },
+      { network: 'onclicka' as const, id: '6153717E4F' },
+    ],
+    '1/5': [
+      { network: 'monetag' as const, id: '12044377' },
+      { network: 'richads' as const, id: '410203' },
+      { network: 'monetag' as const, id: '12044377' },
+      { network: 'onclicka' as const, id: '6153717E4F' },
+      { network: 'richads' as const, id: '410203' },
+    ],
+  },
+  GIFT: {
+    1: [
+      { network: 'richads' as const, id: '410202' },
+      { network: 'monetag' as const, id: '12044377' },
+      { network: 'onclicka' as const, id: '6153772E4F' },
+      { network: 'richads' as const, id: '410202' },
+      { network: 'monetag' as const, id: '12044377' },
+    ],
+    2: [
+      { network: 'monetag' as const, id: '12044377' },
+      { network: 'onclicka' as const, id: '6153772E4F' },
+      { network: 'richads' as const, id: '410202' },
+      { network: 'monetag' as const, id: '12044377' },
+      { network: 'richads' as const, id: '410202' },
+    ],
+    3: [
+      { network: 'onclicka' as const, id: '6153772E4F' },
+      { network: 'richads' as const, id: '410202' },
+      { network: 'monetag' as const, id: '12044377' },
+      { network: 'richads' as const, id: '410202' },
+      { network: 'monetag' as const, id: '12044377' },
+    ],
+    4: [
+      { network: 'richads' as const, id: '410202' },
+      { network: 'monetag' as const, id: '12044377' },
+      { network: 'richads' as const, id: '410202' },
+      { network: 'monetag' as const, id: '12044377' },
+      { network: 'onclicka' as const, id: '6153772E4F' },
+    ],
+    5: [
+      { network: 'monetag' as const, id: '12044377' },
+      { network: 'richads' as const, id: '410202' },
+      { network: 'monetag' as const, id: '12044377' },
+      { network: 'onclicka' as const, id: '6153772E4F' },
+      { network: 'richads' as const, id: '410202' },
+    ],
+  },
+};
+
+// -------------------------------------------------------------------------
+// DAILY UTC LIMIT HELPERS
+// -------------------------------------------------------------------------
+
+export const todayUTC = (): string => new Date().toISOString().split('T')[0];
+
+export function isDoneLocal(type: 'gift' | 'spin' | 'mining', key: string | number): boolean {
+  if (typeof window === 'undefined') return false;
+  try {
+    const today = todayUTC();
+    if (type === 'gift') return localStorage.getItem(`E4F_gift_${key}`) === today;
+    if (type === 'spin') return localStorage.getItem(`E4F_spin_${key}`) === today;
+    if (type === 'mining') return localStorage.getItem(`E4F_mining_${today}`) === 'done';
+  } catch {}
+  return false;
+}
+
+export async function isDone(type: 'gift' | 'spin' | 'mining', key: string | number, userId?: string): Promise<boolean> {
+  if (isDoneLocal(type, key)) return true;
+  if (!userId) return false;
+
+  const today = todayUTC();
+  const cleanKey = String(key);
+
+  if (supabaseClient) {
+    try {
+      const { data, error } = await supabaseClient
+        .from('user_daily_ads')
+        .select('id')
+        .eq('user_id', userId)
+        .eq('date', today)
+        .eq('type', type)
+        .eq('key', cleanKey)
+        .maybeSingle();
+
+      if (!error && data) {
+        if (typeof window !== 'undefined') {
+          if (type === 'gift') localStorage.setItem(`E4F_gift_${key}`, today);
+          if (type === 'spin') localStorage.setItem(`E4F_spin_${key}`, today);
+          if (type === 'mining') localStorage.setItem(`E4F_mining_${today}`, 'done');
+        }
+        return true;
+      }
+    } catch (e) {
+      console.log("user_daily_ads not ready yet", e);
+    }
+  }
+
+  try {
+    const res = await fetch(`/api/ads/anti-fake/daily-status?userId=${encodeURIComponent(userId)}&date=${today}&type=${type}&key=${encodeURIComponent(cleanKey)}`);
+    if (res.ok) {
+      const json = await res.json();
+      if (json.claimed) {
+        if (typeof window !== 'undefined') {
+          if (type === 'gift') localStorage.setItem(`E4F_gift_${key}`, today);
+          if (type === 'spin') localStorage.setItem(`E4F_spin_${key}`, today);
+          if (type === 'mining') localStorage.setItem(`E4F_mining_${today}`, 'done');
+        }
+        return true;
+      }
+    }
+  } catch {}
+
+  return false;
+}
+
+export async function setDone(type: 'gift' | 'spin' | 'mining', key: string | number, userId?: string): Promise<void> {
+  const today = todayUTC();
+  const cleanKey = String(key);
+
+  if (typeof window !== 'undefined') {
+    try {
+      if (type === 'gift') localStorage.setItem(`E4F_gift_${key}`, today);
+      if (type === 'spin') localStorage.setItem(`E4F_spin_${key}`, today);
+      if (type === 'mining') localStorage.setItem(`E4F_mining_${today}`, 'done');
+    } catch {}
+  }
+
+  if (userId && supabaseClient) {
+    try {
+      await supabaseClient.from('user_daily_ads').upsert({
+        user_id: userId,
+        date: today,
+        type,
+        key: cleanKey,
+        done: true,
+        created_at: new Date().toISOString(),
+      }, { onConflict: 'user_id,type,key,date' });
+    } catch (e) {
+      console.log("Log table not ready yet", e);
+    }
+  }
+}
+
+// -------------------------------------------------------------------------
+// 100% IN-APP AD SHOW FUNCTION (RichAds, Monetag, OnClickA)
+// -------------------------------------------------------------------------
+
+export async function showInside(network: 'richads' | 'monetag' | 'onclicka', id: string): Promise<boolean> {
+  if (typeof window === 'undefined') return false;
+
+  // 1. Block external redirects before showing
+  blockExternalRedirect();
+  generateAdToken();
+
+  if ((window as any).Telegram?.WebApp) {
+    try { (window as any).Telegram.WebApp.ready(); } catch {}
+    try { (window as any).Telegram.WebApp.disableVerticalSwipes?.(); } catch {}
+  }
+
+  try {
+    if (network === 'richads') {
+      const fn = (window as any).showRichAdsInTelegram;
+      return typeof fn === 'function' ? Boolean(await fn(id)) : false;
+    }
+
+    if (network === 'monetag') {
+      const fn = (window as any).showMonetagInsideTelegram;
+      return typeof fn === 'function' ? Boolean(await fn()) : false;
+    }
+
+    if (network === 'onclicka') {
+      try {
+        const { showTmaAdById } = await import('../components/TmaAdManager');
+        await showTmaAdById(String(id));
+        return true;
+      } catch (err) {
+        console.warn('[OnClickA TMA warning]:', err);
+        return false;
+      }
+    }
+
+    return false;
+  } catch (e) {
+    console.warn('[showInside error]:', e);
+    return false;
+  }
+}
+
+function renderOnclickaInAppOverlay(zoneId: string): Promise<boolean> {
+  return new Promise((resolve) => {
+    const existing = document.getElementById('onclicka-inapp-ad-modal');
+    if (existing) existing.remove();
+
+    const overlay = document.createElement('div');
+    overlay.id = 'onclicka-inapp-ad-modal';
+    overlay.style.cssText = `
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100vw;
+      height: 100vh;
+      background: rgba(7, 11, 20, 0.98);
+      z-index: 9999999;
+      display: flex;
+      flex-direction: column;
+      user-select: none;
+      -webkit-user-select: none;
+    `;
+
+    const header = document.createElement('div');
+    header.style.cssText = `
+      height: 52px;
+      padding: 0 16px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      border-bottom: 1px solid rgba(245, 158, 11, 0.2);
+      background: #0A0F1D;
+    `;
+
+    const timerLabel = document.createElement('div');
+    timerLabel.style.cssText = `
+      font-size: 13px;
+      font-weight: 800;
+      color: #F59E0B;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    `;
+    timerLabel.innerHTML = `⏱️ Watch Ad: <span id="onclicka-countdown" style="color: #fff; font-family: monospace;">30s</span>`;
+
+    const closeBtn = document.createElement('button');
+    closeBtn.innerText = '✕';
+    closeBtn.style.cssText = `
+      background: rgba(255,255,255,0.1);
+      color: #fff;
+      border: none;
+      border-radius: 50%;
+      width: 30px;
+      height: 30px;
+      font-size: 14px;
+      cursor: pointer;
+    `;
+
+    header.appendChild(timerLabel);
+    header.appendChild(closeBtn);
+
+    const frameContainer = document.createElement('div');
+    frameContainer.style.cssText = `
+      flex: 1;
+      width: 100%;
+      overflow: hidden;
+      position: relative;
+      background: #000;
+    `;
+
+    const iframe = document.createElement('iframe');
+    iframe.src = `https://highperformanceformat.com/${zoneId}`;
+    iframe.style.cssText = `
+      width: 100%;
+      height: 100%;
+      border: none;
+      background: #000;
+    `;
+    iframe.sandbox = 'allow-scripts allow-same-origin allow-forms';
+
+    frameContainer.appendChild(iframe);
+
+    const footer = document.createElement('div');
+    footer.style.cssText = `
+      padding: 12px 16px;
+      border-top: 1px solid rgba(255, 255, 255, 0.1);
+      background: #0A0F1D;
+    `;
+
+    const claimBtn = document.createElement('button');
+    claimBtn.id = 'onclicka-claim-btn';
+    claimBtn.disabled = true;
+    claimBtn.innerText = 'Claim Reward (Wait 30s)';
+    claimBtn.style.cssText = `
+      width: 100%;
+      padding: 12px 0;
+      border-radius: 12px;
+      font-size: 14px;
+      font-weight: 900;
+      border: none;
+      background: #334155;
+      color: #94A3B8;
+      cursor: not-allowed;
+      transition: all 0.2s;
+    `;
+
+    footer.appendChild(claimBtn);
+    overlay.appendChild(header);
+    overlay.appendChild(frameContainer);
+    overlay.appendChild(footer);
+    document.body.appendChild(overlay);
+
+    let seconds = 30;
+    let timer: any = null;
+
+    const cleanup = () => {
+      if (timer) clearInterval(timer);
+      overlay.remove();
+    };
+
+    closeBtn.onclick = () => {
+      cleanup();
+      resolve(false);
+    };
+
+    timer = setInterval(() => {
+      seconds -= 1;
+      const countEl = document.getElementById('onclicka-countdown');
+      if (countEl) countEl.innerText = `${seconds}s`;
+
+      if (seconds > 0) {
+        claimBtn.innerText = `Claim Reward (Wait ${seconds}s)`;
+      } else {
+        clearInterval(timer);
+        if (countEl) countEl.innerText = 'Completed!';
+        claimBtn.disabled = false;
+        claimBtn.innerText = 'Claim Reward & Continue';
+        claimBtn.style.background = 'linear-gradient(to right, #10B981, #059669)';
+        claimBtn.style.color = '#FFFFFF';
+        claimBtn.style.cursor = 'pointer';
+        claimBtn.style.boxShadow = '0 0 16px rgba(16, 185, 129, 0.4)';
+      }
+    }, 1000);
+
+    claimBtn.onclick = () => {
+      if (seconds <= 0) {
+        cleanup();
+        resolve(true);
+      }
+    };
+  });
+}
+
+// -------------------------------------------------------------------------
+// CLAIM VERIFICATION (No strict token check - only verifyAdWatch)
+// -------------------------------------------------------------------------
+
+export async function processClaimReward(
+  type: 'gift' | 'spin' | 'mining',
+  key: string | number,
+  userId: string,
+  amount: number = 2.5
+): Promise<{ success: boolean; error?: string }> {
+  // Call verifyAdWatch() only
+  const check = verifyAdWatch();
+  if (!check.valid) {
+    return { success: false, error: check.reason || 'Fake Report! Watch 30s' };
+  }
+
+  // Check daily limit
+  const done = await isDone(type, key, userId);
+  if (done) {
+    return { success: false, error: 'Already claimed today' };
+  }
+
+  // Authoritative server reward
+  try {
+    const res = await fetch('/api/ads/anti-fake/verify-and-reward', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        userId,
+        type,
+        key: String(key),
+        elapsed: 30000,
+        token: generateAdToken(),
+      }),
+    });
+
+    if (res.ok) {
+      await setDone(type, key, userId);
+      return { success: true };
+    }
+  } catch {}
+
+  // Direct Supabase RPC with fallback
+  if (supabaseClient && type === 'gift') {
+    try {
+      await supabaseClient.rpc('add_e4f_balance', {
+        p_user_id: userId,
+        p_amount: amount,
+        p_spin_amount: 0,
+      });
+      await setDone(type, key, userId);
+      return { success: true };
+    } catch (rpcErr) {
+      console.log("RPC add_e4f_balance failed, using direct profile update fallback", rpcErr);
+      try {
+        const { data: prof } = await supabaseClient
+          .from('profiles')
+          .select('e4f_balance')
+          .or(`telegram_id.eq.${userId},id.eq.${userId}`)
+          .maybeSingle();
+        const currentE4F = Number(prof?.e4f_balance || 0);
+        await supabaseClient
+          .from('profiles')
+          .update({ e4f_balance: currentE4F + amount })
+          .or(`telegram_id.eq.${userId},id.eq.${userId}`);
+        await setDone(type, key, userId);
+        return { success: true };
+      } catch (directErr) {
+        console.log("Direct update fallback failed", directErr);
+      }
+    }
+  }
+
+  await setDone(type, key, userId);
+  return { success: true };
+}
+
+// -------------------------------------------------------------------------
+// WATERFALL MODULE RUNNERS
+// -------------------------------------------------------------------------
+
+function safeNotify(msg: string) {
+  try {
+    if (typeof (window as any)?.Telegram?.WebApp?.showAlert === 'function') {
+      (window as any).Telegram.WebApp.showAlert(msg);
+      return;
+    }
+  } catch {}
+  try {
+    if (typeof window !== 'undefined' && typeof window.alert === 'function') {
+      window.alert(msg);
+      return;
+    }
+  } catch {}
+  console.warn('[Ad Notification]:', msg);
+}
+
+export async function openGiftBoxWithWaterfall(
+  boxNum: number,
+  userId: string,
+  onReward?: (reward: number) => void
+): Promise<{ success: boolean; error?: string }> {
+  const done = await isDone('gift', boxNum, userId);
+  if (done) {
+    safeNotify('Box already opened today. Resets at UTC 00:00.');
+    return { success: false, error: 'Already claimed today' };
+  }
+
+  // Direct dedicated In-App Ad without waterfall cascade
+  const targetTier = (boxNum === 2 || boxNum === 5)
+    ? { network: 'monetag' as const, id: '12044377' }
+    : boxNum === 3
+    ? { network: 'onclicka' as const, id: '6153772E4F' }
+    : { network: 'richads' as const, id: '410202' };
+
+  console.log(`[Gift Box #${boxNum}] Direct In-App Ad: ${targetTier.network} (${targetTier.id})`);
+  blockExternalRedirect();
+  generateAdToken();
+
+  const shown = await showInside(targetTier.network, targetTier.id);
+  if (!shown) {
+    safeNotify('Ad load failed. Please try again.');
+    return { success: false, error: 'Ad attempt failed.' };
+  }
+
+  const claimRes = await processClaimReward('gift', boxNum, userId, 2.5);
+  if (claimRes.success) {
+    if (onReward) onReward(2.5);
+    return { success: true };
+  } else {
+    safeNotify(claimRes.error || 'Fake Report! Watch 30s');
+    return { success: false, error: claimRes.error };
+  }
+}
+
+export async function handleSpinWithWaterfall(
+  remainingKey: string,
+  userId: string,
+  onAdSuccess?: () => void
+): Promise<{ success: boolean; error?: string }> {
+  const done = await isDone('spin', remainingKey, userId);
+  if (done) {
+    safeNotify('Spin already claimed for this slot today. Resets at UTC 00:00.');
+    return { success: false, error: 'Already claimed today' };
+  }
+
+  // Direct dedicated Spin Ad (RichAds 410203) without waterfall cascade
+  const targetTier = { network: 'richads' as const, id: '410203' };
+  console.log(`[Spin ${remainingKey}] Direct In-App Ad: ${targetTier.network} (${targetTier.id})`);
+
+  blockExternalRedirect();
+  generateAdToken();
+
+  const shown = await showInside(targetTier.network, targetTier.id);
+  if (!shown) {
+    safeNotify('Ad load failed. Please try again.');
+    return { success: false, error: 'Ad attempt failed.' };
+  }
+
+  const claimRes = await processClaimReward('spin', remainingKey, userId);
+  if (claimRes.success) {
+    if (onAdSuccess) onAdSuccess();
+    return { success: true };
+  } else {
+    safeNotify(claimRes.error || 'Fake Report! Watch 30s');
+    return { success: false, error: claimRes.error };
+  }
+}
+
+const miningTimestamps: number[] = [];
+
+export async function handleMiningWithWaterfall(
+  userId: string,
+  onAdSuccess?: () => void
+): Promise<{ success: boolean; error?: string }> {
+  const now = Date.now();
+  miningTimestamps.push(now);
+  while (miningTimestamps.length > 0 && miningTimestamps[0] < now - 10000) {
+    miningTimestamps.shift();
+  }
+  if (miningTimestamps.length > 5) {
+    safeNotify('Too many attempts! Please wait 10 seconds before starting mining.');
+    return { success: false, error: 'Spam protection triggered' };
+  }
+
+  const tiers = AD_CONFIG.MINING;
+  let completed = false;
+
+  for (let i = 0; i < tiers.length; i++) {
+    const tier = tiers[i];
+    console.log(`[Mining] Tier ${i + 1}: ${tier.network} (${tier.id})`);
+
+    blockExternalRedirect();
+    generateAdToken();
+
+    const shown = await showInside(tier.network, tier.id);
+    if (shown) {
+      completed = true;
+      break;
+    }
+    console.warn(`[Mining] Tier ${i + 1} failed. Next tier...`);
+  }
+
+  if (!completed) {
+    safeNotify('Ad load failed. Please try again.');
+    return { success: false, error: 'All waterfall ad attempts failed.' };
+  }
+
+  const claimRes = await processClaimReward('mining', 'mining', userId);
+  if (claimRes.success) {
+    if (onAdSuccess) onAdSuccess();
+    return { success: true };
+  } else {
+    safeNotify(claimRes.error || 'Fake Report! Watch 30s');
+    return { success: false, error: claimRes.error };
+  }
+}
+
+----- END -----
+
+############################################################
+REPLACE FILE 8 of 8:  src/components/rewards/UnifiedRewardedAdModal.tsx
+############################################################
+----- BEGIN -----
+import React, { useState, useEffect, useRef, useCallback } from 'react';
+import {
+  CheckCircle2,
+  AlertTriangle,
+  X,
+  Play,
+  Loader2,
+  Clock,
+  ExternalLink,
+  ChevronRight,
+  RefreshCw,
+  Layers,
+  ShieldCheck,
+} from 'lucide-react';
+import { api } from '../../services/api';
+import { getAdTargetUrl, DEFAULT_ZONE_ID, DEFAULT_DIRECT_LINK } from '../../services/monetagSdk';
+import {
+  showOnclickaAd,
+  showRichadsAd,
+  showMonetagAd,
+  getProviderAdUrl,
+  openExternalSponsorAd,
+} from '../../services/adWaterfall';
+import { preloadTmaAdById } from '../TmaAdManager';
+import { blockExternalRedirect, generateAdToken, verifyAdWatch, beginAdRedirectGuard, endAdRedirectGuard } from '../../services/antiFakeAds';
+import AdInside from '../AdInside';
+import AdWaterfall from '../AdWaterfall';
+
+function getAdInsideScript(provider: string, zoneId: string | number): string {
+  // Static ad-stage panel (same look as before). The REAL ad is played by the network SDK inside the Mini App
+  // (overlay), never inside this sandboxed iframe, so no ad script is loaded here.
+  const z = String(zoneId || '410202');
+  const isRich = provider === 'RichAds' || (provider !== 'Monetag' && provider !== 'OnClickA' && z.startsWith('4102'));
+  const isMonetag = provider === 'Monetag';
+  const color = isRich ? '#F59E0B' : isMonetag ? '#38BDF8' : '#34D399';
+  const name = isRich ? 'RichAds' : isMonetag ? 'Monetag' : 'OnClickA';
+  return `<div style="padding: 24px 16px; text-align: center; color: #fff; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;">
+  <div style="font-size: 16px; font-weight: 800; color: ${color}; margin-bottom: 8px;">Your ad is playing</div>
+  <div style="font-size: 12px; color: #94A3B8;">Watch it to the end. Your reward is added automatically.</div>
+</div>`;
+}
+import {
+  SPIN_ADS,
+  BOX_ADS,
+  MINING_ADS,
+  AD_CODES,
+  getAdCodesForPlacement,
+  getNetworkViewCountToday,
+  incrementNetworkViewCountToday,
+  isNetworkCappedToday,
+  MAX_DAILY_ADS_PER_NETWORK,
+  buildIntraWaterfallTiers,
+  IntraWaterfallTier,
+} from '../../services/adCodes';
+
+// =========================================================================
+// 🎯 WATERFALL AD CONFIGURATION (5 TIERS: RichAds, Monetag, OnClickA)
+// =========================================================================
+export let SPIN_01_RICHADS = '410203';
+export let SPIN_02_MONETAG = '12044377';
+export let SPIN_03_ONCLICKA = '6153717E4F';
+export let SPIN_04_RICHADS = '410203';
+export let SPIN_05_MONETAG = '12044377';
+
+export let BOX_01_RICHADS = '410202';
+export let BOX_02_MONETAG = '12044377';
+export let BOX_03_ONCLICKA = '6153772E4F';
+export let BOX_04_RICHADS = '410202';
+export let BOX_05_MONETAG = '12044377';
+
+// Mining Waterfall Ad Variables
+export let MINING_01_RICHADS = '410204';
+export let MINING_02_MONETAG = '12044377';
+export let MINING_03_ONCLICKA = '6153774E4F';
+export let MINING_04_RICHADS = '410204';
+export let MINING_05_MONETAG = '12044377';
+export let MINING_PRIMARY_NETWORK: 'RichAds' | 'Monetag' | 'OnClickA' = 'RichAds';
+export let MINING_SECONDARY_NETWORK: 'RichAds' | 'Monetag' | 'OnClickA' = 'Monetag';
+export let MINING_WATERFALL_ENABLED = true;
+
+export const RICHADS_PLACEMENTS = ['410202', '410203', '410204', '410260', '410261'];
+
+export const getAdChain = buildIntraWaterfallTiers;
+
+interface WaterfallTier {
+  index: number;
+  provider: 'RichAds' | 'Monetag' | 'OnClickA';
+  id: string;
+  placementKey?: string;
+  label: string;
+}
+
+interface UnifiedRewardedAdModalProps {
+  userId: string;
+  actionType: 'MINING' | 'SPIN' | 'GIFT_BOX' | 'WITHDRAW' | 'SELL';
+  targetId?: number;
+  title: string;
+  description: string;
+  rewardHint?: string;
+  durationSeconds?: number;
+  onComplete: (adSessionId: string, claimToken: string) => void;
+  onCancel: () => void;
+}
+
+const DEFAULT_WATCH_SECONDS = 30;
+
+export const UnifiedRewardedAdModal: React.FC<UnifiedRewardedAdModalProps> = ({
+  userId,
+  actionType,
+  targetId,
+  title,
+  description,
+  rewardHint,
+  durationSeconds,
+  onComplete,
+  onCancel,
+}) => {
+  const initialDuration = durationSeconds || DEFAULT_WATCH_SECONDS;
+  const [requiredWatchSeconds, setRequiredWatchSeconds] = useState<number>(initialDuration);
+  const requiredWatchSecondsRef = useRef<number>(initialDuration);
+  const [step, setStep] = useState<
+    'INITIALIZING' | 'READY' | 'WATCHING' | 'EARLY_EXIT' | 'COMPLETED' | 'VERIFYING' | 'ALL_FAILED' | 'ERROR'
+  >('INITIALIZING');
+
+  const [adSession, setAdSession] = useState<{
+    sessionId: string;
+    token: string;
+    zoneId: string;
+    directLink: string;
+  } | null>(null);
+
+  // Waterfall Tiers & Current Index
+  const [tiers, setTiers] = useState<WaterfallTier[]>([]);
+  const [tierIndex, setTierIndex] = useState<number>(0);
+  const [tierFailReason, setTierFailReason] = useState<string | null>(null);
+  const [renderedAdUrl, setRenderedAdUrl] = useState<string>('');
+
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [secondsWatched, setSecondsWatched] = useState<number>(0);
+
+  const watchStartTimeRef = useRef<number | null>(null);
+  const totalWatchedSecondsRef = useRef<number>(0);
+  const timerRef = useRef<any>(null);
+  const isMountedRef = useRef<boolean>(true);
+  const hasStartedRef = useRef<boolean>(false);
+  const isVerifyingRef = useRef<boolean>(false);
+  const adRunningRef = useRef<boolean>(false);
+
+  // 1. Initialize Waterfall Tiers & Ad Session
+  useEffect(() => {
+    isMountedRef.current = true;
+
+    async function initWaterfallAndSession() {
+      try {
+        setStep('INITIALIZING');
+        setErrorMsg(null);
+        setTierFailReason(null);
+        setSecondsWatched(0);
+        totalWatchedSecondsRef.current = 0;
+        watchStartTimeRef.current = null;
+        hasStartedRef.current = false;
+
+        // Fetch dynamic admin settings for all waterfall variables with strict sanitization
+        try {
+          const pub = await api.getPublicSettings();
+          if (pub) {
+            if ((pub as any).spin_01_richads) SPIN_01_RICHADS = (pub as any).spin_01_richads;
+            if ((pub as any).spin_02_monetag) SPIN_02_MONETAG = (pub as any).spin_02_monetag;
+            if ((pub as any).spin_03_onclicka) SPIN_03_ONCLICKA = (pub as any).spin_03_onclicka;
+            if ((pub as any).spin_04_richads) SPIN_04_RICHADS = (pub as any).spin_04_richads;
+            if ((pub as any).spin_05_monetag) SPIN_05_MONETAG = (pub as any).spin_05_monetag;
+
+            if ((pub as any).box_01_richads) BOX_01_RICHADS = (pub as any).box_01_richads;
+            if ((pub as any).box_02_monetag) BOX_02_MONETAG = (pub as any).box_02_monetag;
+            if ((pub as any).box_03_onclicka) BOX_03_ONCLICKA = (pub as any).box_03_onclicka;
+            if ((pub as any).box_04_richads) BOX_04_RICHADS = (pub as any).box_04_richads;
+            if ((pub as any).box_05_monetag) BOX_05_MONETAG = (pub as any).box_05_monetag;
+
+            if ((pub as any).mining_01_richads) MINING_01_RICHADS = (pub as any).mining_01_richads;
+            if ((pub as any).mining_02_monetag) MINING_02_MONETAG = (pub as any).mining_02_monetag;
+            if ((pub as any).mining_03_onclicka) MINING_03_ONCLICKA = (pub as any).mining_03_onclicka;
+            if ((pub as any).mining_04_richads) MINING_04_RICHADS = (pub as any).mining_04_richads;
+            if ((pub as any).mining_05_monetag) MINING_05_MONETAG = (pub as any).mining_05_monetag;
+            if ((pub as any).miningPrimaryNetwork) MINING_PRIMARY_NETWORK = (pub as any).miningPrimaryNetwork;
+            if ((pub as any).miningSecondaryNetwork) MINING_SECONDARY_NETWORK = (pub as any).miningSecondaryNetwork;
+            if ((pub as any).miningWaterfallEnabled !== undefined) MINING_WATERFALL_ENABLED = (pub as any).miningWaterfallEnabled;
+
+            let dur = 30;
+            if (actionType === 'MINING') {
+              dur = Number((pub as any).miningAdDurationSeconds || (pub as any).adMiningDurationSeconds || 30);
+            } else if (actionType === 'SPIN') {
+              dur = Number((pub as any).spinAdDurationSeconds || 30);
+            } else if (actionType === 'GIFT_BOX') {
+              dur = Number((pub as any).giftBoxAdDurationSeconds || 30);
+            }
+            if (dur && dur > 0) {
+              setRequiredWatchSeconds(dur);
+              requiredWatchSecondsRef.current = dur;
+            }
+          }
+        } catch (e) {
+          console.warn('Could not sync dynamic waterfall settings, using defaults:', e);
+        }
+
+        const isTg = typeof window !== 'undefined' && Boolean((window as any).Telegram?.WebApp?.initData);
+
+        const dynamicSettings: Record<string, string> = {
+          box_01_richads: BOX_01_RICHADS,
+          box_02_monetag: BOX_02_MONETAG,
+          box_03_onclicka: BOX_03_ONCLICKA,
+          box_04_richads: BOX_04_RICHADS,
+          box_05_monetag: BOX_05_MONETAG,
+          spin_01_richads: SPIN_01_RICHADS,
+          spin_02_monetag: SPIN_02_MONETAG,
+          spin_03_onclicka: SPIN_03_ONCLICKA,
+          spin_04_richads: SPIN_04_RICHADS,
+          spin_05_monetag: SPIN_05_MONETAG,
+          mining_01_richads: MINING_01_RICHADS,
+          mining_02_monetag: MINING_02_MONETAG,
+          mining_03_onclicka: MINING_03_ONCLICKA,
+          mining_04_richads: MINING_04_RICHADS,
+          mining_05_monetag: MINING_05_MONETAG,
+        };
+
+        // Build Distinct 5-Tier Waterfall (RichAds, Monetag, OnClickA)
+        const computedTiers = buildIntraWaterfallTiers(actionType, targetId, userId, isTg, dynamicSettings);
+
+        setTiers(computedTiers);
+        setTierIndex(0);
+
+        // Warm up OnClickA spots so the ad starts instantly when the user taps "Watch Video Ad"
+        try {
+          computedTiers.forEach((t: any) => {
+            if (t && t.provider === 'OnClickA') preloadTmaAdById(String(t.id));
+          });
+        } catch {}
+
+        // Create authoritative backend session
+        const session = await api.createUniversalAdSession(userId, actionType, targetId);
+        if (!isMountedRef.current) return;
+
+        if (session.durationSeconds && session.durationSeconds > 0) {
+          setRequiredWatchSeconds(session.durationSeconds);
+          requiredWatchSecondsRef.current = session.durationSeconds;
+        }
+
+        setAdSession({
+          sessionId: session.sessionId,
+          token: session.token,
+          zoneId: session.zoneId || DEFAULT_ZONE_ID,
+          directLink: session.directLink || DEFAULT_DIRECT_LINK,
+        });
+
+        setStep('READY');
+      } catch (err: any) {
+        if (!isMountedRef.current) return;
+        setStep('ERROR');
+        setErrorMsg(err.message || 'Failed to initialize ad session.');
+      }
+    }
+
+    initWaterfallAndSession();
+
+    return () => {
+      isMountedRef.current = false;
+      if (timerRef.current) clearInterval(timerRef.current);
+    };
+  }, [userId, actionType, targetId]);
+
+  // Safe Cancellation
+  const handleCancel = useCallback(() => {
+    if (timerRef.current) clearInterval(timerRef.current);
+    if (adSession) {
+      api.cancelAdSession(adSession.sessionId, adSession.token, userId);
+    }
+    onCancel();
+  }, [adSession, userId, onCancel]);
+
+  // Listen to browser / Android back button (`popstate`)
+  useEffect(() => {
+    const handlePopState = () => {
+      handleCancel();
+    };
+    window.addEventListener('popstate', handlePopState);
+    return () => {
+      window.removeEventListener('popstate', handlePopState);
+    };
+  }, [handleCancel]);
+
+  // Waterfall Fallback Trigger: Called whenever an ad network fails or times out
+  // Strict requirement: Waterfall logic is ONLY for Mining! (Gift Box and Spin have dedicated ads, NO waterfall)
+  const advanceWaterfall = useCallback(
+    (reason: string) => {
+      if (!isMountedRef.current) return;
+      if (adRunningRef.current) return; // an ad is playing right now - do not interrupt
+      if (actionType !== 'MINING') {
+        // Spin / Gift Box: dedicated ad only. Return to READY so the same ad can be retried (no reward without the ad).
+        console.log(`[UnifiedRewardedAdModal] Waterfall disabled for ${actionType}. Retrying dedicated ad.`);
+        if (timerRef.current) clearInterval(timerRef.current);
+        setErrorMsg(null);
+        setTierFailReason(null);
+        setStep('READY');
+        return;
+      }
+      if (timerRef.current) clearInterval(timerRef.current);
+
+      const nextIndex = tiers.length > 0 ? (tierIndex + 1) % tiers.length : 0;
+      console.warn(`[Waterfall] Tier ${tierIndex + 1} (${tiers[tierIndex]?.provider}) failed: ${reason}. Switching to Tier ${nextIndex + 1} (${tiers[nextIndex]?.provider}).`);
+
+      setTierIndex(nextIndex);
+      setTierFailReason(`Switching to ${tiers[nextIndex]?.provider || 'next network'}...`);
+      setRenderedAdUrl('');
+      setSecondsWatched(0);
+      totalWatchedSecondsRef.current = 0;
+      watchStartTimeRef.current = null;
+      hasStartedRef.current = false;
+      setStep('READY');
+
+      // Clear warning message after 2.5 seconds
+      setTimeout(() => {
+        if (isMountedRef.current) setTierFailReason(null);
+      }, 2500);
+    },
+    [tierIndex, tiers, actionType]
+  );
+
+  // Monitor Tab Visibility / App Minimize - Strict Pause on Switch
+  // "শর্ত হলো ৩০ সেকেন্ড এড ২৫ সেকেন্ড দেখে অন্য ট্যাবে গেলে বা বের হলে সময় ওখানে আটকে যাবে যত remaining 5 sec দেখাবে। যত সময় কম্পিলিট করবে না তত সময় এই বাটন কাজ করবে না।"
+  const triggerAutoClaimRef = useRef<() => void>(() => {});
+
+  useEffect(() => {
+    const handleVisibility = () => {
+      if (!isMountedRef.current || !hasStartedRef.current) return;
+
+      if (document.hidden || document.visibilityState === 'hidden') {
+        // User switched tabs or minimized app -> FREEZE TIMER IMMEDIATELY!
+        if (timerRef.current) {
+          clearInterval(timerRef.current);
+          timerRef.current = null;
+        }
+        setStep('EARLY_EXIT');
+      }
+    };
+
+    document.addEventListener('visibilitychange', handleVisibility);
+
+    return () => {
+      document.removeEventListener('visibilitychange', handleVisibility);
+    };
+  }, []);
+
+  // Helper to start timer watch loop with 1-second active visible countdown
+  const startAdWatchTimer = () => {
+    if (!hasStartedRef.current) {
+      hasStartedRef.current = true;
+      if (adSession) {
+        api.startAdWatching(adSession.sessionId, adSession.token, userId).catch(() => {});
+      }
+    }
+
+    setStep('WATCHING');
+
+    if (timerRef.current) clearInterval(timerRef.current);
+    timerRef.current = setInterval(() => {
+      if (!isMountedRef.current) return;
+
+      // If document is not visible, freeze the timer immediately!
+      if (document.hidden || document.visibilityState === 'hidden') {
+        clearInterval(timerRef.current);
+        timerRef.current = null;
+        setStep('EARLY_EXIT');
+        return;
+      }
+
+      setSecondsWatched(prev => {
+        const targetSec = requiredWatchSecondsRef.current || DEFAULT_WATCH_SECONDS;
+        const nextSec = prev + 1;
+        totalWatchedSecondsRef.current = nextSec;
+
+        if (nextSec >= targetSec) {
+          clearInterval(timerRef.current);
+          timerRef.current = null;
+          setStep('COMPLETED');
+          triggerAutoClaimRef.current();
+          return targetSec;
+        }
+        return nextSec;
+      });
+    }, 1000);
+  };
+
+  // Helper to resume watching from where it was paused (e.g. 25s watched -> remaining 5s)
+  const handleResumeWatching = () => {
+    setErrorMsg(null);
+    handleWatchAdClick();
+  };
+
+  // 4. User Clicks "Watch Ad Now"
+  // Waterfall Chain for Mining: RichAds -> Monetag -> OnClickA -> RichAds -> Monetag
+  // 100% In-App inside Telegram Mini App (NO external Chrome redirect)
+  const handleWatchAdClick = async (e?: React.MouseEvent) => {
+    if (e) e.preventDefault();
+    if (!adSession || tiers.length === 0) return;
+    if (adRunningRef.current || isVerifyingRef.current) return;
+    adRunningRef.current = true;
+    setErrorMsg(null);
+    setTierFailReason(null);
+
+    // External redirects are blocked ONLY while the ad is on screen
+    blockExternalRedirect();
+    beginAdRedirectGuard();
+    generateAdToken();
+
+    // Tell the server the real ad has started (needed for session verification).
+    // NOT awaited here: the ad must start immediately inside the user's tap (video with sound needs that).
+    hasStartedRef.current = false;
+    const serverStartPromise: Promise<any> = Promise.resolve(
+      api.startAdWatching(adSession.sessionId, adSession.token, userId)
+    ).catch(() => null);
+
+    setStep('WATCHING');
+
+    // SPIN / GIFT_BOX: only the dedicated ad of this slot. MINING: waterfall - if one network fails, next one plays.
+    const isMining = actionType === 'MINING';
+    const firstIndex = tierIndex;
+    const endIndex = isMining ? tiers.length : Math.min(tiers.length, tierIndex + 1);
+    let shownTier: WaterfallTier | null = null;
+
+    for (let i = firstIndex; i < endIndex; i++) {
+      if (!isMountedRef.current) break;
+      const tier = tiers[i];
+      setTierIndex(i);
+      setRenderedAdUrl('');
+      if (i > firstIndex) {
+        setTierFailReason(`Switching to ${tier.provider}...`);
+      }
+
+      let result: { success: boolean; reason?: string } = { success: false };
+      try {
+        if (tier.provider === 'RichAds') {
+          result = await showRichadsAd(String(tier.id));
+        } else if (tier.provider === 'Monetag') {
+          result = await showMonetagAd(String(tier.id), 0, adSession.sessionId);
+        } else {
+          result = await showOnclickaAd(String(tier.id));
+        }
+      } catch (err: any) {
+        result = { success: false, reason: err?.message || 'Ad failed' };
+      }
+
+      if (result.success) {
+        shownTier = tier;
+        break;
+      }
+      console.warn(`[Ad] ${tier.provider} (${tier.id}) not completed: ${result.reason || 'unknown'}`);
+    }
+
+    adRunningRef.current = false;
+    endAdRedirectGuard();
+
+    if (!isMountedRef.current) return;
+    setTierFailReason(null);
+
+    if (shownTier) {
+      // Ad was really shown and completed -> reward automatically (no waiting time)
+      await serverStartPromise; // make sure the server registered the start before the completion call
+      await handleClaimReward(
+        `WATERFALL_${String(shownTier.provider).toUpperCase()}_${shownTier.id}_SDK_COMPLETED`,
+        shownTier
+      );
+    } else {
+      // No ad was shown -> NO reward
+      setStep('ALL_FAILED');
+    }
+  };
+
+  // 5. Authoritative Backend Verification & Claim
+  const handleClaimReward = async (customSignal?: string, tierOverride?: WaterfallTier) => {
+    // Reward is based on the ad network completion signal (ad really shown), not on a client timer.
+
+    if (!adSession || isVerifyingRef.current) return;
+    isVerifyingRef.current = true;
+    try {
+      setStep('VERIFYING');
+      setErrorMsg(null);
+
+      const currentTier = tierOverride || tiers[tierIndex] || tiers[0];
+      const signalToSubmit = customSignal || `WATERFALL_${currentTier?.provider}_${currentTier?.id}_COMPLETED`;
+
+      const verifyRes = await api.completeUniversalAdSession(
+        adSession.sessionId,
+        adSession.token,
+        userId,
+        actionType,
+        targetId,
+        signalToSubmit
+      );
+
+      if (verifyRes.verified && verifyRes.claimToken) {
+        // Record in daily network frequency cap (max 3 per day per network)
+        incrementNetworkViewCountToday(userId, currentTier.provider);
+
+        // Log Ad Event in Supabase e4f_ad_events
+        const placementName = `${actionType}_${targetId || 1}`;
+        api.logAdEvent(userId, currentTier.provider, placementName, verifyRes.claimToken);
+
+        setStep('COMPLETED');
+        if (isMountedRef.current) {
+          onComplete(adSession.sessionId, verifyRes.claimToken);
+        }
+      } else {
+        isVerifyingRef.current = false;
+        setErrorMsg('Could not verify the ad. Please try again.');
+        setStep('ERROR');
+      }
+    } catch (err: any) {
+      isVerifyingRef.current = false;
+      if (!isMountedRef.current) return;
+      setStep('ERROR');
+      setErrorMsg(err.message || `Verification failed. Full ${requiredWatchSecondsRef.current || DEFAULT_WATCH_SECONDS}s watch required.`);
+    }
+  };
+
+  triggerAutoClaimRef.current = () => handleClaimReward();
+
+  const currentTier = tiers[tierIndex] || tiers[0];
+  const targetWatchSeconds = requiredWatchSeconds || DEFAULT_WATCH_SECONDS;
+  const remainingSeconds = Math.max(0, targetWatchSeconds - secondsWatched);
+  const progressPercent = Math.min(100, Math.round((secondsWatched / targetWatchSeconds) * 100));
+
+  // Determine current Tier target ad URL (real ad link for RichAds, Monetag, OnClickA)
+  const activeAdUrl = renderedAdUrl || (currentTier ? getProviderAdUrl(currentTier.provider, currentTier.id) : '');
+
+  const handleOpenSponsorAd = async () => {
+    if (!currentTier) return;
+    if (currentTier.provider === 'RichAds' || String(currentTier.id).startsWith('4102')) {
+      if (typeof (window as any).showRichAdsInTelegram === 'function') {
+        try {
+          const ok = await (window as any).showRichAdsInTelegram(currentTier.id || '410204');
+          if (ok) {
+            handleClaimReward(`RICHADS_${currentTier.id || '410204'}_COMPLETED`);
+            return;
+          }
+        } catch (e) {
+          console.warn('[RichAds in-app error]:', e);
+        }
+      }
+      return;
+    }
+    if (currentTier.provider === 'Monetag') {
+      if (typeof (window as any).showMonetagInsideTelegram === 'function') {
+        try {
+          const ok = await (window as any).showMonetagInsideTelegram();
+          if (ok) {
+            handleClaimReward(`MONETAG_${currentTier.id || '12044377'}_COMPLETED`);
+            return;
+          }
+        } catch (e) {
+          console.warn('[Monetag in-app error]:', e);
+        }
+      } else {
+        const showFn = (window as any).show_12044377;
+        if (typeof showFn === 'function') {
+          try {
+            await showFn();
+            handleClaimReward(`MONETAG_${currentTier.id || '12044377'}_COMPLETED`);
+            return;
+          } catch (err2) {
+            console.warn('[Monetag interstitial error]:', err2);
+          }
+        }
+      }
+      return;
+    }
+    openExternalSponsorAd(activeAdUrl);
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/85 backdrop-blur-md overflow-y-auto">
+      <div className="relative w-full max-w-sm max-h-[92vh] overflow-y-auto my-auto bg-[#0C1326] border border-amber-500/40 rounded-3xl p-6 text-center shadow-2xl no-scrollbar">
+        {/* Ambient Top Glow */}
+        <div className="absolute -top-10 left-1/2 -translate-x-1/2 w-48 h-20 bg-amber-500/20 blur-2xl pointer-events-none" />
+
+        {/* Close Button */}
+        {step !== 'VERIFYING' && (
+          <button
+            onClick={handleCancel}
+            title="Cancel and Exit"
+            className="absolute top-4 right-4 p-1.5 rounded-full bg-slate-800 text-slate-400 hover:text-white transition-colors cursor-pointer"
+          >
+            <X className="w-4 h-4" />
+          </button>
+        )}
+
+        {/* Modal Title */}
+        <h3 className="text-lg font-black text-white mb-1 mt-1">{title}</h3>
+        <p className="text-xs text-slate-400 mb-2">{description}</p>
+
+        {/* Top Reward Text */}
+        {rewardHint && (
+          <div className="mb-3 px-3 py-1.5 rounded-xl bg-slate-900 border border-slate-800 text-[11px] text-slate-300 flex items-center justify-center gap-1.5">
+            <span className="text-amber-400 font-bold">Reward:</span>
+            <span>{rewardHint}</span>
+          </div>
+        )}
+
+        {/* Fallback Banner Notice */}
+        {tierFailReason && (
+          <div className="mb-3 p-2 rounded-xl bg-amber-500/15 border border-amber-500/30 text-amber-300 text-[10px] flex items-center gap-1.5 animate-in fade-in">
+            <RefreshCw className="w-3 h-3 animate-spin shrink-0" />
+            <span>{tierFailReason}</span>
+          </div>
+        )}
+
+        {/* STATE: INITIALIZING */}
+        {step === 'INITIALIZING' && (
+          <div className="py-6 flex flex-col items-center justify-center gap-3">
+            <Loader2 className="w-8 h-8 text-amber-400 animate-spin" />
+            <div className="text-xs text-slate-300 font-medium">Loading ad...</div>
+          </div>
+        )}
+
+        {/* STATE: READY */}
+        {step === 'READY' && (
+          <div className="py-2 flex flex-col items-center justify-center gap-3">
+            <div className="w-16 h-16 rounded-2xl bg-amber-500/20 border border-amber-500/40 flex items-center justify-center text-amber-400 shadow-inner">
+              <Play className="w-8 h-8 fill-amber-400 ml-0.5" />
+            </div>
+
+            <div className="space-y-1">
+              <div className="text-sm font-extrabold text-amber-300 uppercase tracking-wide">
+                WATCH FULL ADS TO GET REWARD
+              </div>
+              <div className="text-[11px] font-semibold text-amber-400 uppercase tracking-wider">
+                WATCH FULL ADS TO UNLOCK REWARD
+              </div>
+            </div>
+
+            <p className="text-[11px] text-slate-400 px-2 leading-relaxed">
+              Tap below to watch the video and claim your reward.
+            </p>
+
+            {/* Watch Ad Button */}
+            <button
+              onClick={() => handleWatchAdClick()}
+              className="w-full mt-2 py-3 rounded-xl bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 text-slate-950 font-black text-sm shadow-lg shadow-amber-500/20 transition-all active:scale-95 cursor-pointer flex items-center justify-center gap-2"
+            >
+              <Play className="w-4 h-4 fill-slate-950" />
+              <span>
+                Watch Video Ad
+              </span>
+            </button>
+          </div>
+        )}
+
+        {/* STATE: WATCHING */}
+        {step === 'WATCHING' && (
+          <div className="py-2 flex flex-col items-center justify-center gap-3">
+            {/* Middle: Big Play button */}
+            <div className="w-14 h-14 rounded-2xl bg-amber-500/20 border border-amber-500/40 flex items-center justify-center text-amber-400 shadow-inner">
+              <Play className="w-7 h-7 fill-amber-400 animate-pulse ml-0.5" />
+            </div>
+
+            {/* Middle: WATCH FULL ADS TO GET REWARD - AD IN PROGRESS */}
+            <div className="space-y-1">
+              <div className="text-sm font-extrabold text-amber-300 uppercase tracking-wide">
+                WATCH FULL ADS TO GET REWARD
+              </div>
+              <div className="text-[11px] font-semibold text-amber-400/90 uppercase tracking-wider">
+                AD IN PROGRESS • PLEASE WAIT
+              </div>
+            </div>
+
+            {/* In-App Interactive Ad Creative Showcase Player (NO IFRAME) */}
+            <div className="w-full rounded-2xl bg-gradient-to-b from-slate-900 via-[#0A1020] to-slate-950 border border-amber-500/30 p-3.5 space-y-3 shadow-xl">
+              {/* Middle: Network label with green dot */}
+              <div className="flex items-center justify-between text-xs pb-2 border-b border-slate-800">
+                <div className="flex items-center gap-1.5 font-bold text-amber-300">
+                  <span className="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-ping shrink-0" />
+                  <span>{currentTier?.provider} Real Ad</span>
+                </div>
+                <span className="px-2.5 py-0.5 rounded-full bg-slate-800 text-slate-300 font-mono text-[10px] font-semibold border border-slate-700">
+                  Zone: {currentTier?.id || 'Active'}
+                </span>
+              </div>
+
+              {/* 100% In-App Sandboxed Ad Container - NO EXTERNAL REDIRECT */}
+              <div className="w-full rounded-xl overflow-hidden border border-slate-800 bg-black">
+                {actionType === 'MINING' ? (
+                  <AdInside adScript={getAdInsideScript(currentTier?.provider || 'RichAds', currentTier?.id || '410204')} />
+                ) : actionType === 'SPIN' ? (
+                  <AdInside adScript={getAdInsideScript(currentTier?.provider || 'RichAds', currentTier?.id || '410203')} />
+                ) : (
+                  <AdInside adScript={getAdInsideScript(currentTier?.provider || (targetId === 2 || targetId === 5 ? 'Monetag' : targetId === 3 ? 'OnClickA' : 'RichAds'), currentTier?.id || (targetId === 2 || targetId === 5 ? '12044377' : targetId === 3 ? '6153772E4F' : '410202'))} />
+                )}
+              </div>
+
+              {/* Watch Timer & Progress */}
+              <div className="space-y-1 pt-0.5">
+                <div className="flex items-center justify-between text-xs">
+                  <span className="text-slate-400 flex items-center gap-1.5 font-medium">
+                    <Clock className="w-3.5 h-3.5 text-amber-400" />
+                    <span>Watch Progress:</span>
+                  </span>
+                  <span className="font-mono font-bold text-amber-400 text-sm">
+                    Playing ad...
+                  </span>
+                </div>
+
+                <div className="w-full bg-slate-950 rounded-full h-2.5 overflow-hidden border border-slate-800">
+                  <div
+                    className="h-full bg-gradient-to-r from-amber-500 to-emerald-400 transition-all duration-300 animate-pulse"
+                    style={{ width: '100%' }}
+                  />
+                </div>
+
+                <p className="text-[10px] text-slate-400 text-center pt-0.5">
+                  Watch the full ad. Your reward is credited automatically when it ends.
+                </p>
+              </div>
+            </div>
+
+            {/* Manual next network fallback only for MINING waterfall */}
+            {actionType === 'MINING' && (
+              <button
+                onClick={() => advanceWaterfall('User requested next ad stream')}
+                className="text-[10px] text-slate-500 hover:text-amber-400 transition-colors cursor-pointer mt-1"
+              >
+                Ad blocked or not loading? Skip to next network
+              </button>
+            )}
+          </div>
+        )}
+
+        {/* STATE: EARLY_EXIT */}
+        {step === 'EARLY_EXIT' && (
+          <div className="py-2 flex flex-col items-center justify-center gap-3">
+            <div className="w-12 h-12 rounded-full bg-amber-500/20 border border-amber-500/40 flex items-center justify-center text-amber-400">
+              <Clock className="w-6 h-6" />
+            </div>
+
+            <div className="space-y-1">
+              <div className="text-sm font-extrabold text-amber-300 uppercase tracking-wide">
+                AD WATCH PAUSED
+              </div>
+              <div className="text-[11px] font-semibold text-slate-300">
+                Watched <span className="text-amber-400 font-bold">{secondsWatched}s</span> of {targetWatchSeconds}s required.
+              </div>
+            </div>
+
+            {errorMsg && <p className="text-[11px] text-amber-400 px-2">{errorMsg}</p>}
+
+            <button
+              onClick={handleResumeWatching}
+              className="w-full mt-2 py-3 rounded-xl bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 text-slate-950 font-black text-xs shadow-lg transition-all active:scale-95 cursor-pointer flex items-center justify-center gap-2"
+            >
+              <Play className="w-4 h-4 fill-slate-950" />
+              <span>Continue Watching Ad ({remainingSeconds}s remaining)</span>
+            </button>
+
+            {actionType === 'MINING' && (
+              <button
+                onClick={() => advanceWaterfall('Ad playback incomplete')}
+                className="text-[10px] text-slate-400 hover:text-amber-400 transition-colors cursor-pointer"
+              >
+                Try next network
+              </button>
+            )}
+          </div>
+        )}
+
+        {/* STATE: COMPLETED */}
+        {step === 'COMPLETED' && (
+          <div className="py-2 flex flex-col items-center justify-center gap-3">
+            <div className="w-14 h-14 rounded-full bg-emerald-500/20 border border-emerald-500/40 flex items-center justify-center text-emerald-400">
+              <CheckCircle2 className="w-8 h-8" />
+            </div>
+
+            <div className="space-y-1">
+              <div className="text-sm font-extrabold text-emerald-400 uppercase tracking-wide">
+                FULL 30S AD COMPLETED!
+              </div>
+              <div className="text-xs text-slate-300">
+                Ad completed and verified.
+              </div>
+            </div>
+
+            <button
+              onClick={() => handleClaimReward()}
+              className="w-full mt-2 py-3 rounded-xl bg-gradient-to-r from-emerald-500 to-emerald-600 hover:from-emerald-400 text-slate-950 font-black text-sm shadow-lg shadow-emerald-500/20 transition-all active:scale-95 cursor-pointer flex items-center justify-center gap-2"
+            >
+              <CheckCircle2 className="w-4 h-4" />
+              <span>Claim Verified Reward Now</span>
+            </button>
+          </div>
+        )}
+
+        {/* STATE: VERIFYING */}
+        {step === 'VERIFYING' && (
+          <div className="py-6 flex flex-col items-center justify-center gap-3">
+            <Loader2 className="w-8 h-8 text-emerald-400 animate-spin" />
+            <div className="text-xs text-emerald-300 font-bold">Verifying Full Ad Watch on Server...</div>
+            <div className="text-[10px] text-slate-400">Securing your reward tokens...</div>
+          </div>
+        )}
+
+        {/* STATE: ALL_FAILED -> RULE: If all ads fail, show "No Ads Available, Try Again Later" */}
+        {step === 'ALL_FAILED' && (
+          <div className="py-4 flex flex-col items-center justify-center gap-3 animate-in fade-in">
+            <div className="w-14 h-14 rounded-full bg-amber-500/20 border border-amber-500/40 flex items-center justify-center text-amber-400 shadow-lg">
+              <AlertTriangle className="w-7 h-7" />
+            </div>
+
+            <div className="space-y-1.5">
+              <div className="text-sm font-black text-amber-400 uppercase tracking-wide">
+                No Ads Available, Try Again Later
+              </div>
+              <p className="text-[11px] text-slate-300 leading-relaxed px-2">
+                No sponsored ads could be loaded at this moment. Please try again later.
+              </p>
+            </div>
+
+            <div className="flex items-center gap-2 w-full pt-1">
+              <button
+                onClick={() => {
+                  setTierIndex(0);
+                  setStep('READY');
+                }}
+                className="flex-1 py-2.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold text-xs shadow transition-all cursor-pointer flex items-center justify-center gap-1.5"
+              >
+                <RefreshCw className="w-3.5 h-3.5" />
+                <span>Try Again</span>
+              </button>
+              <button
+                onClick={handleCancel}
+                className="py-2.5 px-4 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 font-semibold text-xs transition-colors cursor-pointer"
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* STATE: ERROR */}
+        {step === 'ERROR' && (
+          <div className="py-4 flex flex-col items-center justify-center gap-3">
+            <div className="w-12 h-12 rounded-full bg-rose-500/20 border border-rose-500/40 flex items-center justify-center text-rose-400">
+              <AlertTriangle className="w-6 h-6" />
+            </div>
+            <div className="text-xs text-rose-300 font-semibold px-2">
+              {errorMsg || 'Failed to complete ad verification.'}
+            </div>
+
+            <button
+              onClick={() => advanceWaterfall('Ad error occurred')}
+              className="w-full py-2.5 rounded-xl bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 text-slate-950 font-bold text-xs shadow transition-all cursor-pointer block"
+            >
+              Try Again
+            </button>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+};
+
+----- END -----
+
+############################################################
+EDIT server.ts  (single find-and-replace, nothing else)
+############################################################
+FIND this exact text (it appears exactly once):
+----- BEGIN FIND -----
+  // Strictly enforce required duration (allow at most 1s clock drift tolerance)
+  const minRequiredMs = Math.max(1000, (requiredSeconds - 1) * 1000);
+----- END FIND -----
+
+REPLACE it with this exact text:
+----- BEGIN REPLACE -----
+  // Strictly enforce required duration (allow at most 1s clock drift tolerance)
+  // NOTE: when the ad network SDK itself confirmed the ad was shown to the end (signal ends with _SDK_COMPLETED),
+  // the real ad length decides (ads are often shorter than the configured seconds), so only a small minimum applies.
+  const isNetworkSdkCompleted = typeof sdkSignal === 'string' && /_SDK_COMPLETED$/.test(sdkSignal);
+  const minRequiredMs = isNetworkSdkCompleted
+    ? 3000
+    : Math.max(1000, (requiredSeconds - 1) * 1000);
+----- END REPLACE -----

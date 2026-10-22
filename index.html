@@ -1,0 +1,263 @@
+<!doctype html>
+<html lang="en" class="dark">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+    <title>E4F Web3 Exchange</title>
+    <meta name="description" content="Professional Web3 Exchange & Telegram Mini App Ecosystem with E4F Mining, Rewards, Spot Wallet, and Real-Time Market Infrastructure." />
+    <meta property="og:title" content="E4F Web3 Exchange" />
+    <meta property="og:description" content="Mine • Earn • Trade • Grow - The Official E4F Web3 Exchange." />
+    <meta property="og:type" content="website" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <link rel="icon" type="image/jpeg" href="/e4f_coin.jpg" />
+    <!-- Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700;800;900&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <!-- Telegram WebApp Pre-Init & Version 8.0 Safety -->
+    <script>
+      (function() {
+        var origErr = console.error;
+        console.error = function() {
+          if (arguments[0] && typeof arguments[0] === 'string' && arguments[0].indexOf('CloudStorage is not supported') !== -1) {
+            return;
+          }
+          return origErr.apply(console, arguments);
+        };
+
+        try {
+          var h = window.location.hash || '';
+          var s = window.location.search || '';
+          if (h.indexOf('tgWebAppVersion=') === -1 && s.indexOf('tgWebAppVersion=') === -1) {
+            var prefix = h ? h + '&' : '#';
+            if (window.history && window.history.replaceState) {
+              window.history.replaceState(null, '', window.location.pathname + window.location.search + prefix + 'tgWebAppVersion=8.0&tgWebAppPlatform=android');
+            }
+          }
+        } catch (e) {}
+      })();
+    </script>
+    <!-- Telegram WebApp SDK -->
+    <script src="https://telegram.org/js/telegram-web-app.js"></script>
+    <script>
+      (function() {
+        try {
+          // 1. Immediate Telegram Viewport Initialization
+          if (window.Telegram && window.Telegram.WebApp) {
+            var tg = window.Telegram.WebApp;
+            try {
+              tg.isVersionAtLeast = function() { return true; };
+            } catch (e) {}
+            try {
+              Object.defineProperty(tg, 'version', {
+                get: function() { return '8.0'; },
+                set: function() {},
+                configurable: true
+              });
+            } catch (e) {
+              try { tg.version = '8.0'; } catch (e2) {}
+            }
+
+            try {
+              tg.isVersionAtLeast = function(ver) { return true; };
+            } catch (e) {}
+
+            var safeStorage = {
+              setItem: function(key, value, cb) {
+                try { localStorage.setItem('tg_cloud_' + key, String(value)); if (cb) cb(null, true); } catch (e) { if (cb) cb(e); }
+                return this;
+              },
+              getItem: function(key, cb) {
+                try { var val = localStorage.getItem('tg_cloud_' + key); if (cb) cb(null, val); } catch (e) { if (cb) cb(e); }
+                return this;
+              },
+              getItems: function(keys, cb) {
+                try {
+                  var res = {};
+                  (keys || []).forEach(function(k) { res[k] = localStorage.getItem('tg_cloud_' + k); });
+                  if (cb) cb(null, res);
+                } catch (e) { if (cb) cb(e); }
+                return this;
+              },
+              removeItem: function(key, cb) {
+                try { localStorage.removeItem('tg_cloud_' + key); if (cb) cb(null, true); } catch (e) { if (cb) cb(e); }
+                return this;
+              },
+              removeItems: function(keys, cb) {
+                try { (keys || []).forEach(function(k) { localStorage.removeItem('tg_cloud_' + k); }); if (cb) cb(null, true); } catch (e) { if (cb) cb(e); }
+                return this;
+              },
+              getKeys: function(cb) {
+                try {
+                  var keys = [];
+                  for (var i = 0; i < localStorage.length; i++) {
+                    var k = localStorage.key(i);
+                    if (k && k.indexOf('tg_cloud_') === 0) keys.push(k.replace('tg_cloud_', ''));
+                  }
+                  if (cb) cb(null, keys);
+                } catch (e) { if (cb) cb(e); }
+                return this;
+              }
+            };
+
+            try {
+              Object.defineProperty(tg, 'CloudStorage', {
+                get: function() { return safeStorage; },
+                set: function() {},
+                configurable: true
+              });
+            } catch (e) {
+              tg.CloudStorage = safeStorage;
+            }
+
+            try { tg.ready(); } catch (e) {}
+            try { tg.expand(); } catch (e) {}
+            try { if (tg.disableVerticalSwipes) tg.disableVerticalSwipes(); } catch (e) {}
+            try { if (tg.enableClosingConfirmation) tg.enableClosingConfirmation(); } catch (e) {}
+          }
+
+          // 2. Sync Launch Params to SessionStorage for Telegram Mini App SDKs
+          var fullHref = window.location.href || '';
+          var hash = window.location.hash || '';
+          var search = window.location.search || '';
+          var srcStr = (hash.indexOf('tgWebAppData=') !== -1) ? hash : ((search.indexOf('tgWebAppData=') !== -1) ? search : '');
+          var initData = '';
+          var platform = 'android';
+          var version = '8.0';
+          var theme = '{}';
+
+          if (srcStr) {
+            var clean = srcStr.replace(/^[#?]/, '');
+            var p = new URLSearchParams(clean);
+            initData = p.get('tgWebAppData') || '';
+            platform = p.get('tgWebAppPlatform') || platform;
+            version = p.get('tgWebAppVersion') || version;
+            theme = p.get('tgWebAppThemeParams') || theme;
+          } else if (window.Telegram && window.Telegram.WebApp && window.Telegram.WebApp.initData) {
+            initData = window.Telegram.WebApp.initData;
+            platform = window.Telegram.WebApp.platform || platform;
+            version = window.Telegram.WebApp.version || version;
+            try {
+              theme = JSON.stringify(window.Telegram.WebApp.themeParams || {});
+            } catch (e) {}
+          }
+
+          if (initData) {
+            var payload = JSON.stringify({
+              tgWebAppData: initData,
+              tgWebAppPlatform: platform,
+              tgWebAppVersion: version,
+              tgWebAppThemeParams: theme
+            });
+            sessionStorage.setItem('__telegram__initParams', payload);
+            sessionStorage.setItem('adsgram/launch-params', payload);
+            sessionStorage.setItem('telegram-apps/launch-params', payload);
+            sessionStorage.setItem('tapps/launchParams', payload);
+            sessionStorage.setItem('tma.js/launch-params', payload);
+
+            // Ensure window.location.hash retains tgWebAppData for Adsgram URL parser
+            if (!window.location.hash.includes('tgWebAppData=')) {
+              var newHash = 'tgWebAppData=' + encodeURIComponent(initData) + '&tgWebAppPlatform=' + encodeURIComponent(platform) + '&tgWebAppVersion=' + encodeURIComponent(version);
+              if (window.history && window.history.replaceState) {
+                window.history.replaceState(null, '', window.location.pathname + window.location.search + '#' + newHash);
+              }
+            }
+          }
+        } catch (err) {
+          console.warn('[TG Param Sync Warn]:', err);
+        }
+      })();
+    </script>
+    <!-- RichAds Telegram Mini App SDK (First Ad Tag) -->
+    <script src="https://richinfo.co/richpartners/telegram/js/tg-ob.js?pubId=1025839&appId=9319"></script>
+    <script>
+      try {
+        if (typeof TelegramAdsController !== 'undefined') {
+          window.TelegramAdsController = new TelegramAdsController();
+          window.TelegramAdsController.initialize({
+            pubId: "1025839",
+            appId: "9319",
+          });
+        }
+      } catch (e) {
+        console.warn('[RichAds Controller Init Warn]:', e);
+      }
+
+      // Global In-App RichAds Telegram Bridge (Never opens external browser)
+      window.showRichAdsInTelegram = function(richadsId) {
+        console.log('Attempt RichAds', richadsId);
+        return new Promise(function(resolve) {
+          var resolved = false;
+          function safeResolve(val) {
+            if (!resolved) {
+              resolved = true;
+              resolve(val);
+            }
+          }
+
+          try {
+            var ctrl = window.TelegramAdsController;
+            if (ctrl) {
+              console.log('RichAds controller available for:', richadsId);
+              var idStr = String(richadsId || '410204');
+              if (typeof ctrl.showRewardedAd === 'function') {
+                try { ctrl.showRewardedAd(idStr); } catch (e) {}
+              } else if (typeof ctrl.showInApp === 'function') {
+                try { ctrl.showInApp({ id: idStr }); } catch (e) {}
+              }
+            }
+            safeResolve(true);
+          } catch (e) {
+            console.error('RichAds invoke error:', e);
+            safeResolve(false);
+          }
+        });
+      };
+    </script>
+    <style>
+      /* RichAds in-app overlay styling: position:fixed, width 100%, height 100%, z-index 999999 */
+      #richads-overlay,
+      .richads-overlay,
+      div[class*="richpartners"],
+      div[id*="richpartners"],
+      div[class*="tg-ads"],
+      iframe[src*="richinfo.co"] {
+        position: fixed !important;
+        top: 0 !important;
+        left: 0 !important;
+        width: 100% !important;
+        height: 100% !important;
+        z-index: 999999 !important;
+      }
+    </style>
+    <!-- Monetag Telegram Mini App SDK (Zone 12044377) -->
+    <script src="//gizokraijaw.net/400/12044377.js" async></script>
+    <script src="https://libtl.com/sdk.js" data-zone="12044377" data-sdk="show_12044377"></script>
+    <!-- OnClickA TMA In-Stream Ad Manager (window.initCdTma) -->
+    <script src="https://js.onclckvd.com/in-stream-ad-admanager/tma.js"></script>
+    <script>
+      // Immediate In-App Monetag Telegram Bridge (Never opens external browser)
+      window.showMonetagInsideTelegram = function() {
+        return new Promise(function(resolve) {
+          try {
+            var fn = window.show_12044377;
+            if (typeof fn !== 'function') return resolve(false);
+            var res = fn();
+            if (res && typeof res.then === 'function') {
+              res.then(function() { resolve(true); }).catch(function() { resolve(false); });
+            } else {
+              resolve(true);
+            }
+          } catch (e) {
+            resolve(false);
+          }
+        });
+      };
+    </script>
+  </head>
+  <body class="bg-[#070B14] text-slate-100 antialiased selection:bg-amber-500/30 selection:text-amber-200 overflow-x-hidden min-h-screen">
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>
+

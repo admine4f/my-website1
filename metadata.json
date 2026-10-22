@@ -1,0 +1,8 @@
+{
+  "name": "Remix E4F Web3 Exchange",
+  "description": "Professional Web3 Exchange \u0026 Telegram Mini App Ecosystem with E4F Mining, Rewards, Spot Wallet, and Real-Time Market Infrastructure.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
