@@ -1,36 +1,34 @@
 // =========================================================================
-// 🎯 WATERFALL AD CONFIGURATION (5 TIERS: RichAds -> Monetag -> OnClickA -> RichAds/TADS -> Monetag)
-// 100% Inside Telegram Mini App • Slot #4 TADS (12823) Support
+// 🎯 WATERFALL AD CONFIGURATION (5 TIERS: RichAds -> Monetag -> OnClickA -> RichAds -> Monetag)
+// 100% Inside Telegram Mini App • Spin/Box slot #4 = Monetag 12044377 (TADS removed)
 // =========================================================================
-
-import { isTadsAd, showTadsAdByContext } from '../components/common/AdGate';
 
 // Spin 1-5 Waterfall IDs
 export let spin_01_richads = '410203';
 export let spin_02_monetag = '12044377';
 export let spin_03_onclicka = '6153717E4F';
-export let spin_04_richads = '12823';
+export let spin_04_richads = '12044377';
 export let spin_05_monetag = '12044377';
 
 // Gift Box 1-5 Waterfall IDs
 export let box_01_richads = '410202';
 export let box_02_monetag = '12044377';
 export let box_03_onclicka = '6153772E4F';
-export let box_04_richads = '12823';
+export let box_04_richads = '12044377';
 export let box_05_monetag = '12044377';
 
 // Mining 1-5 Waterfall IDs
 export let mining_01_richads = '410204';
 export let mining_02_monetag = '12044377';
 export let mining_03_onclicka = '6153774E4F';
-export let mining_04_richads = '12823';
+export let mining_04_richads = '410204';
 export let mining_05_monetag = '12044377';
 
 export const RICHADS_PLACEMENTS = ['410202', '410203', '410204', '410260', '410261'];
 
 export interface WaterfallTier {
   index: number;
-  provider: 'RichAds' | 'Monetag' | 'OnClickA' | 'TADS';
+  provider: 'RichAds' | 'Monetag' | 'OnClickA';
   id: string;
   label: string;
   placementKey?: string;
@@ -117,17 +115,11 @@ export async function syncWaterfallSettings(): Promise<{
 // Spin 1-5 Dedicated Ads (Waterfall Logic Removed: Each Spin Has Dedicated Ad)
 export function getSpinWaterfallTiers(targetSpinNumber?: number): WaterfallTier[] {
   const num = Math.max(1, Math.min(5, Number(targetSpinNumber) || 1));
-  const spin04IsTads = isTadsAd(spin_04_richads);
   const spinMap: Record<number, WaterfallTier> = {
     1: { index: 1, provider: 'RichAds', id: spin_01_richads || '410203', label: 'RichAds (Spin 1)' },
     2: { index: 1, provider: 'Monetag', id: spin_02_monetag || '12044377', label: 'Monetag (Spin 2)' },
     3: { index: 1, provider: 'OnClickA', id: spin_03_onclicka || '6153717E4F', label: 'OnClickA (Spin 3)' },
-    4: {
-      index: 1,
-      provider: spin04IsTads ? 'TADS' : 'RichAds',
-      id: spin_04_richads || '12823',
-      label: spin04IsTads ? 'TADS (Spin 4)' : 'RichAds (Spin 4)',
-    },
+    4: { index: 1, provider: 'Monetag', id: spin_04_richads || '12044377', label: 'Monetag (Spin 4)' },
     5: { index: 1, provider: 'Monetag', id: spin_05_monetag || '12044377', label: 'Monetag (Spin 5)' },
   };
   return [spinMap[num] || spinMap[1]];
@@ -136,34 +128,22 @@ export function getSpinWaterfallTiers(targetSpinNumber?: number): WaterfallTier[
 // Gift Box 1-5 Dedicated Ads (Waterfall Logic Removed: Box Number = Dedicated Network)
 export function getBoxWaterfallTiers(targetBoxNumber?: number): WaterfallTier[] {
   const num = Math.max(1, Math.min(5, Number(targetBoxNumber) || 1));
-  const box04IsTads = isTadsAd(box_04_richads);
   const boxMap: Record<number, WaterfallTier> = {
     1: { index: 1, provider: 'RichAds', id: box_01_richads || '410202', label: 'RichAds (Box 1)' },
     2: { index: 1, provider: 'Monetag', id: box_02_monetag || '12044377', label: 'Monetag (Box 2)' },
     3: { index: 1, provider: 'OnClickA', id: box_03_onclicka || '6153772E4F', label: 'OnClickA (Box 3)' },
-    4: {
-      index: 1,
-      provider: box04IsTads ? 'TADS' : 'RichAds',
-      id: box_04_richads || '12823',
-      label: box04IsTads ? 'TADS (Box 4)' : 'RichAds (Box 4)',
-    },
+    4: { index: 1, provider: 'Monetag', id: box_04_richads || '12044377', label: 'Monetag (Box 4)' },
     5: { index: 1, provider: 'Monetag', id: box_05_monetag || '12044377', label: 'Monetag (Box 5)' },
   };
   return [boxMap[num] || boxMap[1]];
 }
 
 export function getMiningWaterfallTiers(): WaterfallTier[] {
-  const mining04IsTads = isTadsAd(mining_04_richads);
   return [
     { index: 1, provider: 'RichAds', id: mining_01_richads, label: 'RichAds (Primary)' },
     { index: 2, provider: 'Monetag', id: mining_02_monetag, label: 'Monetag (Tier 2)' },
     { index: 3, provider: 'OnClickA', id: mining_03_onclicka, label: 'OnClickA (Tier 3)' },
-    {
-      index: 4,
-      provider: mining04IsTads ? 'TADS' : 'RichAds',
-      id: mining_04_richads,
-      label: mining04IsTads ? 'TADS (Tier 4)' : 'RichAds (Tier 4)',
-    },
+    { index: 4, provider: 'RichAds', id: mining_04_richads, label: 'RichAds (Tier 4)' },
     { index: 5, provider: 'Monetag', id: mining_05_monetag, label: 'Monetag (Tier 5)' },
   ];
 }
@@ -188,8 +168,7 @@ export function getOnclickaAdUrl(zoneId: string): string {
   return `https://onclicka.com/delivery/site/${clean}`;
 }
 
-export function getProviderAdUrl(provider: 'RichAds' | 'Monetag' | 'OnClickA' | 'TADS', zoneId: string): string {
-  if (provider === 'TADS' || isTadsAd(zoneId)) return `https://w.tads.me/widget/${zoneId}.js`;
+export function getProviderAdUrl(provider: 'RichAds' | 'Monetag' | 'OnClickA', zoneId: string): string {
   if (provider === 'RichAds') return getRichadsAdUrl(zoneId);
   if (provider === 'Monetag') return getMonetagAdUrl(zoneId);
   if (provider === 'OnClickA') return getOnclickaAdUrl(zoneId);
@@ -207,12 +186,11 @@ export function openExternalSponsorAd(url: string) {
 }
 
 // =========================================================================
-// REAL AD HANDLERS (RichAds / TADS, Monetag, OnClickA)
+// REAL AD HANDLERS (RichAds, Monetag, OnClickA)
 // =========================================================================
 
 /**
- * 1. RichAds (Slot 1 & 4) - plays INSIDE Telegram.
- * If Slot #4 is set to TADS (12823 or starts with 12 and len 5), renders TADS inside Telegram!
+ * 1. RichAds (Slot 1 & mining slot 4) - plays INSIDE Telegram.
  */
 export async function showRichadsAd(
   zoneId: string,
@@ -220,19 +198,6 @@ export async function showRichadsAd(
   context?: { actionType?: string; targetId?: number }
 ): Promise<{ success: boolean; completed: boolean; adUrl: string; reason?: string }> {
   const cleanId = String(zoneId || '410204').trim();
-
-  // Slot #4 Check: if (adId === "12823" || (adId.length === 5 && adId.startsWith("12")))
-  if (isTadsAd(cleanId)) {
-    try {
-      const ok = await showTadsAdByContext(cleanId, context?.actionType, context?.targetId);
-      return ok
-        ? { success: true, completed: true, adUrl: `https://w.tads.me/widget/${cleanId}.js` }
-        : { success: false, completed: false, adUrl: '', reason: 'TADS ad not completed' };
-    } catch (err: any) {
-      console.warn('[TADS Error]:', err);
-      return { success: false, completed: false, adUrl: '', reason: err?.message || 'TADS error' };
-    }
-  }
 
   const adUrl = getRichadsAdUrl(cleanId);
   try {
@@ -314,7 +279,7 @@ export const WATERFALL = {
     { network: 'onclicka', tag: '6153772E4F', code: '<iframe src="https://highperformanceformat.com/6153772E4F" style="width:100%;height:380px;border:none;"></iframe>' },
   ],
   box4: [
-    { network: 'richads', tag: '12823', code: '<div id="tads-gift-4-12823"></div><script src="https://w.tads.me/widget/12823.js"></script>' },
+    { network: 'monetag', tag: '12044377', code: '<script src="https://libtl.com/sdk.js" data-zone="12044377" data-sdk="show_12044377"></script><script>try{window.show_12044377 && window.show_12044377();}catch(e){}</script><div style="padding:24px;text-align:center;color:#fff;font-family:sans-serif;"><h3>Monetag In-App Sponsor</h3><p>Zone: 12044377</p></div>' },
   ],
   box5: [
     { network: 'monetag', tag: '12044377', code: '<script src="https://libtl.com/sdk.js" data-zone="12044377" data-sdk="show_12044377"></script><script>try{window.show_12044377 && window.show_12044377();}catch(e){}</script><div style="padding:24px;text-align:center;color:#fff;font-family:sans-serif;"><h3>Monetag In-App Sponsor</h3><p>Zone: 12044377</p></div>' },
@@ -326,7 +291,7 @@ export const WATERFALL = {
     { network: 'richads', tag: '410204', code: '<script src="https://richinfo.co/richpartners/telegram/js/tg-ob.js?pubId=1025839&appId=9319"></script><script>try{window.TelegramAdsController && window.TelegramAdsController.showRewardedAd(410204);}catch(e){}</script><div style="padding:24px;text-align:center;color:#fff;font-family:sans-serif;"><h3>RichAds In-App Sponsor</h3><p>Zone: 410204</p></div>' },
     { network: 'monetag', tag: '12044377', code: '<script src="https://libtl.com/sdk.js" data-zone="12044377" data-sdk="show_12044377"></script><script>try{window.show_12044377 && window.show_12044377();}catch(e){}</script><div style="padding:24px;text-align:center;color:#fff;font-family:sans-serif;"><h3>Monetag In-App Sponsor</h3><p>Zone: 12044377</p></div>' },
     { network: 'onclicka', tag: '6153774E4F', code: '<iframe src="https://highperformanceformat.com/6153774E4F" style="width:100%;height:380px;border:none;"></iframe>' },
-    { network: 'richads', tag: '12823', code: '<div id="tads-mining-12823"></div><script src="https://w.tads.me/widget/12823.js"></script>' },
+    { network: 'richads', tag: '410204', code: '<script src="https://richinfo.co/richpartners/telegram/js/tg-ob.js?pubId=1025839&appId=9319"></script><script>try{window.TelegramAdsController && window.TelegramAdsController.showRewardedAd(410204);}catch(e){}</script><div style="padding:24px;text-align:center;color:#fff;font-family:sans-serif;"><h3>RichAds In-App Sponsor</h3><p>Zone: 410204</p></div>' },
     { network: 'monetag', tag: '12044377', code: '<script src="https://libtl.com/sdk.js" data-zone="12044377" data-sdk="show_12044377"></script><script>try{window.show_12044377 && window.show_12044377();}catch(e){}</script><div style="padding:24px;text-align:center;color:#fff;font-family:sans-serif;"><h3>Monetag In-App Sponsor</h3><p>Zone: 12044377</p></div>' },
   ]
 };

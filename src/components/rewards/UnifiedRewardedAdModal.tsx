@@ -26,6 +26,34 @@ import { blockExternalRedirect, generateAdToken, verifyAdWatch, beginAdRedirectG
 import AdInside from '../AdInside';
 import AdWaterfall from '../AdWaterfall';
 
+// =========================================================================
+// FINAL AD RULES (Spin / Gift Box / Mining)
+//  - Spin N and Gift Box N: only the ad of slot N. If it fails to show: wait 5s, try the SAME ad once more (2 tries),
+//    then show Monetag 12044377 as backup.
+//  - Monetag: after it was shown, it rests 59s (never called again during that time). Shared by Spin, Gift Box and Mining.
+//  - Only one ad flow at a time (global lock).
+//  - Mining: 5 ads one after another (step 1 -> 5); the mining session starts when the sequence is finished.
+//  - Ad closed midway = no reward. Ad finished = automatic reward.
+// =========================================================================
+const RETRY_DELAY_SECONDS = 5;
+const MONETAG_COOLDOWN_MS = 59000;
+const NO_FILL_MS = 4000; // a failure faster than this = "no ad available"; a later failure = "user closed the ad"
+const MONETAG_LAST_KEY = 'E4F_monetag_last_shown';
+let globalAdBusy = false;
+let monetagLastShownMem = 0;
+const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
+function monetagCooldownLeftMs(): number {
+  let last = monetagLastShownMem;
+  try { last = Math.max(last, Number(localStorage.getItem(MONETAG_LAST_KEY) || 0)); } catch {}
+  const left = last + MONETAG_COOLDOWN_MS - Date.now();
+  return left > 0 ? left : 0;
+}
+function markMonetagShown() {
+  monetagLastShownMem = Date.now();
+  try { localStorage.setItem(MONETAG_LAST_KEY, String(monetagLastShownMem)); } catch {}
+}
+const BACKUP_TIER: any = { provider: 'Monetag', id: '12044377', label: 'Monetag (Backup)' };
+
 function getAdInsideScript(provider: string, zoneId: string | number): string {
   // Static ad-stage panel (same look as before). The REAL ad is played by the network SDK inside the Mini App
   // (overlay), never inside this sandboxed iframe, so no ad script is loaded here.
@@ -59,20 +87,20 @@ import {
 export let SPIN_01_RICHADS = '410203';
 export let SPIN_02_MONETAG = '12044377';
 export let SPIN_03_ONCLICKA = '6153717E4F';
-export let SPIN_04_RICHADS = '12823'; // Default TADS 12823
+export let SPIN_04_RICHADS = '12044377'; // Slot 4 = Monetag 12044377
 export let SPIN_05_MONETAG = '12044377';
 
 export let BOX_01_RICHADS = '410202';
 export let BOX_02_MONETAG = '12044377';
 export let BOX_03_ONCLICKA = '6153772E4F';
-export let BOX_04_RICHADS = '12823'; // Default TADS 12823
+export let BOX_04_RICHADS = '12044377'; // Slot 4 = Monetag 12044377
 export let BOX_05_MONETAG = '12044377';
 
 // Mining Waterfall Ad Variables
 export let MINING_01_RICHADS = '410204';
 export let MINING_02_MONETAG = '12044377';
 export let MINING_03_ONCLICKA = '6153774E4F';
-export let MINING_04_RICHADS = '12823'; // Default TADS 12823
+export let MINING_04_RICHADS = '410204'; // Default RichAds 410204
 export let MINING_05_MONETAG = '12044377';
 export let MINING_PRIMARY_NETWORK: 'RichAds' | 'Monetag' | 'OnClickA' = 'RichAds';
 export let MINING_SECONDARY_NETWORK: 'RichAds' | 'Monetag' | 'OnClickA' = 'Monetag';
@@ -84,7 +112,7 @@ export const getAdChain = buildIntraWaterfallTiers;
 
 interface WaterfallTier {
   index: number;
-  provider: 'RichAds' | 'Monetag' | 'OnClickA' | 'TADS';
+  provider: 'RichAds' | 'Monetag' | 'OnClickA';
   id: string;
   placementKey?: string;
   label: string;
@@ -145,6 +173,14 @@ export const UnifiedRewardedAdModal: React.FC<UnifiedRewardedAdModalProps> = ({
   const hasStartedRef = useRef<boolean>(false);
   const isVerifyingRef = useRef<boolean>(false);
   const adRunningRef = useRef<boolean>(false);
+  const miningNextStepRef = useRef<number>(0);       // Mining: next ad (0-based) of the 5-ad sequence
+  const miningCompletedRef = useRef<number>(0);      // Mining: how many ads of the sequence were really completed
+  const miningLastShownRef = useRef<WaterfallTier | null>(null);
+  const [statusNote, setStatusNote] = useState<string>('');
+  const isMiningView = actionType === 'MINING';
+  const [miningStep, setMiningStep] = useState<number | null>(null);
+  const [initNonce, setInitNonce] = useState<number>(0);
+  const watchTicketRef = useRef<string>('');
 
   // 1. Initialize Waterfall Tiers & Ad Session
   useEffect(() => {
@@ -160,119 +196,30 @@ export const UnifiedRewardedAdModal: React.FC<UnifiedRewardedAdModalProps> = ({
         watchStartTimeRef.current = null;
         hasStartedRef.current = false;
 
-        // 1. First check localStorage key "adGateIds" for instant live updates without redeploy
-        try {
-          const raw = localStorage.getItem('adGateIds');
-          if (raw) {
-            const parsed = JSON.parse(raw);
-            if (parsed.spin_01_richads) SPIN_01_RICHADS = parsed.spin_01_richads;
-            if (parsed.spin_02_monetag) SPIN_02_MONETAG = parsed.spin_02_monetag;
-            if (parsed.spin_03_onclicka) SPIN_03_ONCLICKA = parsed.spin_03_onclicka;
-            if (parsed.spin_04_richads) SPIN_04_RICHADS = parsed.spin_04_richads;
-            if (parsed.spin_05_monetag) SPIN_05_MONETAG = parsed.spin_05_monetag;
+        // Create authoritative backend session. The SERVER decides the slot and the ad network/ids
+        // (Mining = 5-step waterfall, Spin / Gift Box = the dedicated ad of this slot).
+        const session = await api.createUniversalAdSession(userId, actionType, targetId);
+        if (!isMountedRef.current) return;
 
-            if (parsed.box_01_richads) BOX_01_RICHADS = parsed.box_01_richads;
-            if (parsed.box_02_monetag) BOX_02_MONETAG = parsed.box_02_monetag;
-            if (parsed.box_03_onclicka) BOX_03_ONCLICKA = parsed.box_03_onclicka;
-            if (parsed.box_04_richads) BOX_04_RICHADS = parsed.box_04_richads;
-            if (parsed.box_05_monetag) BOX_05_MONETAG = parsed.box_05_monetag;
-
-            if (parsed.mining_01_richads) MINING_01_RICHADS = parsed.mining_01_richads;
-            if (parsed.mining_02_monetag) MINING_02_MONETAG = parsed.mining_02_monetag;
-            if (parsed.mining_03_onclicka) MINING_03_ONCLICKA = parsed.mining_03_onclicka;
-            if (parsed.mining_04_richads) MINING_04_RICHADS = parsed.mining_04_richads;
-            if (parsed.mining_05_monetag) MINING_05_MONETAG = parsed.mining_05_monetag;
-
-            let locDur = 30;
-            if (actionType === 'MINING' && parsed.miningAdDuration) locDur = Number(parsed.miningAdDuration);
-            else if (actionType === 'SPIN' && parsed.spinAdDuration) locDur = Number(parsed.spinAdDuration);
-            else if (actionType === 'GIFT_BOX' && parsed.giftBoxAdDuration) locDur = Number(parsed.giftBoxAdDuration);
-
-            if (locDur > 0) {
-              setRequiredWatchSeconds(locDur);
-              requiredWatchSecondsRef.current = locDur;
-            }
-          }
-        } catch {}
-
-        // Fetch dynamic admin settings for all waterfall variables with strict sanitization
-        try {
-          const pub = await api.getPublicSettings();
-          if (pub) {
-            if ((pub as any).spin_01_richads) SPIN_01_RICHADS = (pub as any).spin_01_richads;
-            if ((pub as any).spin_02_monetag) SPIN_02_MONETAG = (pub as any).spin_02_monetag;
-            if ((pub as any).spin_03_onclicka) SPIN_03_ONCLICKA = (pub as any).spin_03_onclicka;
-            if ((pub as any).spin_04_richads) SPIN_04_RICHADS = (pub as any).spin_04_richads;
-            if ((pub as any).spin_05_monetag) SPIN_05_MONETAG = (pub as any).spin_05_monetag;
-
-            if ((pub as any).box_01_richads) BOX_01_RICHADS = (pub as any).box_01_richads;
-            if ((pub as any).box_02_monetag) BOX_02_MONETAG = (pub as any).box_02_monetag;
-            if ((pub as any).box_03_onclicka) BOX_03_ONCLICKA = (pub as any).box_03_onclicka;
-            if ((pub as any).box_04_richads) BOX_04_RICHADS = (pub as any).box_04_richads;
-            if ((pub as any).box_05_monetag) BOX_05_MONETAG = (pub as any).box_05_monetag;
-
-            if ((pub as any).mining_01_richads) MINING_01_RICHADS = (pub as any).mining_01_richads;
-            if ((pub as any).mining_02_monetag) MINING_02_MONETAG = (pub as any).mining_02_monetag;
-            if ((pub as any).mining_03_onclicka) MINING_03_ONCLICKA = (pub as any).mining_03_onclicka;
-            if ((pub as any).mining_04_richads) MINING_04_RICHADS = (pub as any).mining_04_richads;
-            if ((pub as any).mining_05_monetag) MINING_05_MONETAG = (pub as any).mining_05_monetag;
-            if ((pub as any).miningPrimaryNetwork) MINING_PRIMARY_NETWORK = (pub as any).miningPrimaryNetwork;
-            if ((pub as any).miningSecondaryNetwork) MINING_SECONDARY_NETWORK = (pub as any).miningSecondaryNetwork;
-            if ((pub as any).miningWaterfallEnabled !== undefined) MINING_WATERFALL_ENABLED = (pub as any).miningWaterfallEnabled;
-
-            let dur = 30;
-            if (actionType === 'MINING') {
-              dur = Number((pub as any).miningAdDurationSeconds || (pub as any).adMiningDurationSeconds || 30);
-            } else if (actionType === 'SPIN') {
-              dur = Number((pub as any).spinAdDurationSeconds || 30);
-            } else if (actionType === 'GIFT_BOX') {
-              dur = Number((pub as any).giftBoxAdDurationSeconds || 30);
-            }
-            if (dur && dur > 0) {
-              setRequiredWatchSeconds(dur);
-              requiredWatchSecondsRef.current = dur;
-            }
-          }
-        } catch (e) {
-          console.warn('Could not sync dynamic waterfall settings, using defaults:', e);
+        if (!session.tiers || session.tiers.length === 0) {
+          throw new Error('No ad is configured for this action. Please try again later.');
         }
-
-        const isTg = typeof window !== 'undefined' && Boolean((window as any).Telegram?.WebApp?.initData);
-
-        const dynamicSettings: Record<string, string> = {
-          box_01_richads: BOX_01_RICHADS,
-          box_02_monetag: BOX_02_MONETAG,
-          box_03_onclicka: BOX_03_ONCLICKA,
-          box_04_richads: BOX_04_RICHADS,
-          box_05_monetag: BOX_05_MONETAG,
-          spin_01_richads: SPIN_01_RICHADS,
-          spin_02_monetag: SPIN_02_MONETAG,
-          spin_03_onclicka: SPIN_03_ONCLICKA,
-          spin_04_richads: SPIN_04_RICHADS,
-          spin_05_monetag: SPIN_05_MONETAG,
-          mining_01_richads: MINING_01_RICHADS,
-          mining_02_monetag: MINING_02_MONETAG,
-          mining_03_onclicka: MINING_03_ONCLICKA,
-          mining_04_richads: MINING_04_RICHADS,
-          mining_05_monetag: MINING_05_MONETAG,
-        };
-
-        // Build Distinct 5-Tier Waterfall (RichAds, Monetag, OnClickA)
-        const computedTiers = buildIntraWaterfallTiers(actionType, targetId, userId, isTg, dynamicSettings);
-
-        setTiers(computedTiers);
+        const serverTiers: WaterfallTier[] = session.tiers.map((t: any, i: number) => ({
+          index: t.index || i + 1,
+          provider: t.provider,
+          id: String(t.id),
+          label: t.label,
+        }));
+        setTiers(serverTiers);
         setTierIndex(0);
+        watchTicketRef.current = '';
 
         // Warm up OnClickA spots so the ad starts instantly when the user taps "Watch Video Ad"
         try {
-          computedTiers.forEach((t: any) => {
+          serverTiers.forEach((t: any) => {
             if (t && t.provider === 'OnClickA') preloadTmaAdById(String(t.id));
           });
         } catch {}
-
-        // Create authoritative backend session
-        const session = await api.createUniversalAdSession(userId, actionType, targetId);
-        if (!isMountedRef.current) return;
 
         if (session.durationSeconds && session.durationSeconds > 0) {
           setRequiredWatchSeconds(session.durationSeconds);
@@ -300,7 +247,7 @@ export const UnifiedRewardedAdModal: React.FC<UnifiedRewardedAdModalProps> = ({
       isMountedRef.current = false;
       if (timerRef.current) clearInterval(timerRef.current);
     };
-  }, [userId, actionType, targetId]);
+  }, [userId, actionType, targetId, initNonce]);
 
   // Safe Cancellation
   const handleCancel = useCallback(() => {
@@ -384,46 +331,6 @@ export const UnifiedRewardedAdModal: React.FC<UnifiedRewardedAdModalProps> = ({
     };
   }, []);
 
-  // Helper to start timer watch loop with 1-second active visible countdown
-  const startAdWatchTimer = () => {
-    if (!hasStartedRef.current) {
-      hasStartedRef.current = true;
-      if (adSession) {
-        api.startAdWatching(adSession.sessionId, adSession.token, userId).catch(() => {});
-      }
-    }
-
-    setStep('WATCHING');
-
-    if (timerRef.current) clearInterval(timerRef.current);
-    timerRef.current = setInterval(() => {
-      if (!isMountedRef.current) return;
-
-      // If document is not visible, freeze the timer immediately!
-      if (document.hidden || document.visibilityState === 'hidden') {
-        clearInterval(timerRef.current);
-        timerRef.current = null;
-        setStep('EARLY_EXIT');
-        return;
-      }
-
-      setSecondsWatched(prev => {
-        const targetSec = requiredWatchSecondsRef.current || DEFAULT_WATCH_SECONDS;
-        const nextSec = prev + 1;
-        totalWatchedSecondsRef.current = nextSec;
-
-        if (nextSec >= targetSec) {
-          clearInterval(timerRef.current);
-          timerRef.current = null;
-          setStep('COMPLETED');
-          triggerAutoClaimRef.current();
-          return targetSec;
-        }
-        return nextSec;
-      });
-    }, 1000);
-  };
-
   // Helper to resume watching from where it was paused (e.g. 25s watched -> remaining 5s)
   const handleResumeWatching = () => {
     setErrorMsg(null);
@@ -436,10 +343,12 @@ export const UnifiedRewardedAdModal: React.FC<UnifiedRewardedAdModalProps> = ({
   const handleWatchAdClick = async (e?: React.MouseEvent) => {
     if (e) e.preventDefault();
     if (!adSession || tiers.length === 0) return;
-    if (adRunningRef.current || isVerifyingRef.current) return;
+    if (adRunningRef.current || isVerifyingRef.current || globalAdBusy) return; // one ad at a time
     adRunningRef.current = true;
+    globalAdBusy = true;
     setErrorMsg(null);
     setTierFailReason(null);
+    setStatusNote('');
 
     // External redirects are blocked ONLY while the ad is on screen
     blockExternalRedirect();
@@ -449,62 +358,170 @@ export const UnifiedRewardedAdModal: React.FC<UnifiedRewardedAdModalProps> = ({
     // Tell the server the real ad has started (needed for session verification).
     // NOT awaited here: the ad must start immediately inside the user's tap (video with sound needs that).
     hasStartedRef.current = false;
+    watchTicketRef.current = '';
     const serverStartPromise: Promise<any> = Promise.resolve(
       api.startAdWatching(adSession.sessionId, adSession.token, userId)
-    ).catch(() => null);
+    )
+      .then((r: any) => {
+        if (r && r.watchTicket) watchTicketRef.current = r.watchTicket;
+        return r;
+      })
+      .catch(() => null);
 
     setStep('WATCHING');
 
-    // SPIN / GIFT_BOX: only the dedicated ad of this slot. MINING: waterfall - if one network fails, next one plays.
+    const alive = () => isMountedRef.current;
     const isMining = actionType === 'MINING';
-    const firstIndex = tierIndex;
-    const endIndex = isMining ? tiers.length : Math.min(tiers.length, tierIndex + 1);
-    let shownTier: WaterfallTier | null = null;
+    let finalTier: WaterfallTier | null = null;
+    let outcome: 'reward' | 'closed' | 'nofill' = 'nofill';
 
-    for (let i = firstIndex; i < endIndex; i++) {
-      if (!isMountedRef.current) break;
-      const tier = tiers[i];
-      setTierIndex(i);
-      setRenderedAdUrl('');
-      if (i > firstIndex) {
-        setTierFailReason(`Switching to ${tier.provider}...`);
-      }
-
-      let result: { success: boolean; reason?: string } = { success: false };
-      try {
-        if (tier.provider === 'RichAds' || (tier.provider as any) === 'TADS') {
-          result = await showRichadsAd(String(tier.id), 8000, { actionType, targetId });
-        } else if (tier.provider === 'Monetag') {
-          result = await showMonetagAd(String(tier.id), 0, adSession.sessionId);
-        } else {
-          result = await showOnclickaAd(String(tier.id));
+    try {
+      // One ad call. A quick failure = "no ad available"; a late failure = "the user closed it midway".
+      const showOnce = async (tier: WaterfallTier): Promise<{ ok: boolean; noFill: boolean }> => {
+        const t0 = Date.now();
+        let ok = false;
+        try {
+          let r: { success: boolean; reason?: string };
+          if (tier.provider === 'RichAds') {
+            r = await showRichadsAd(String(tier.id), 8000, { actionType, targetId });
+          } else if (tier.provider === 'Monetag') {
+            r = await showMonetagAd(String(tier.id), 0, adSession.sessionId);
+          } else {
+            r = await showOnclickaAd(String(tier.id));
+          }
+          ok = !!r.success;
+          if (!ok) console.warn(`[Ad] ${tier.provider} (${tier.id}) not completed: ${r.reason || 'unknown'}`);
+        } catch (err: any) {
+          console.warn('[Ad] error:', err);
+          ok = false;
         }
-      } catch (err: any) {
-        result = { success: false, reason: err?.message || 'Ad failed' };
-      }
+        const ms = Date.now() - t0;
+        const noFill = !ok && ms < NO_FILL_MS;
+        if (tier.provider === 'Monetag' && (ok || !noFill)) markMonetagShown(); // Monetag was shown -> 59s rest
+        return { ok, noFill };
+      };
 
-      if (result.success) {
-        shownTier = tier;
-        break;
+      // Monetag must rest 59s after it was shown: wait here (the user sees a countdown), never call it earlier
+      const waitMonetagRest = async (): Promise<boolean> => {
+        let left = monetagCooldownLeftMs();
+        while (left > 0) {
+          if (!alive()) return false;
+          setStatusNote(`NEXT AD READY IN ${Math.ceil(left / 1000)}S`);
+          await sleep(250);
+          left = monetagCooldownLeftMs();
+        }
+        setStatusNote('');
+        return alive();
+      };
+
+      const attempt = async (tier: WaterfallTier): Promise<{ ok: boolean; noFill: boolean }> => {
+        if (tier.provider === 'Monetag' && !(await waitMonetagRest())) return { ok: false, noFill: false };
+        return showOnce(tier);
+      };
+
+      // Rule: try -> (quick failure) wait 5s -> try the same ad again -> (Spin/Gift only) Monetag backup
+      const tryTier = async (
+        tier: WaterfallTier,
+        allowBackup: boolean,
+        allowRetry: boolean = true
+      ): Promise<{ status: 'ok' | 'nofill' | 'closed'; shown?: WaterfallTier }> => {
+        let r = await attempt(tier);
+        if (r.ok) return { status: 'ok', shown: tier };
+        if (!r.noFill) return { status: 'closed' };
+        if (!allowRetry) return { status: 'nofill' }; // Mining: this network has no ad -> next step
+
+        for (let sec = RETRY_DELAY_SECONDS; sec > 0; sec--) {
+          if (!alive()) return { status: 'closed' };
+          setStatusNote(`RETRYING IN ${sec}S`);
+          await sleep(1000);
+        }
+        setStatusNote('');
+        r = await attempt(tier);
+        if (r.ok) return { status: 'ok', shown: tier };
+        if (!r.noFill) return { status: 'closed' };
+
+        if (allowBackup && tier.provider !== 'Monetag') {
+          // if Monetag is resting (59s), wait here with a visible countdown, then show the backup ad
+          if (!(await waitMonetagRest())) return { status: 'closed' };
+          setStatusNote('BACKUP AD');
+          r = await showOnce(BACKUP_TIER);
+          setStatusNote('');
+          if (r.ok) return { status: 'ok', shown: BACKUP_TIER as WaterfallTier };
+          if (!r.noFill) return { status: 'closed' };
+        }
+        return { status: 'nofill' };
+      };
+
+      if (isMining) {
+        // MINING: waterfall 1 -> 5. The first ad that really plays to the end is enough; mining then starts automatically.
+        let aborted = false;
+        for (let i = miningNextStepRef.current; i < tiers.length; i++) {
+          if (!alive()) break;
+          setTierIndex(i);
+          setMiningStep(i + 1);
+          setRenderedAdUrl('');
+          const r = await tryTier(tiers[i], false, false);
+          if (!alive()) break;
+          if (r.status === 'ok') {
+            miningCompletedRef.current += 1;
+            miningLastShownRef.current = r.shown || tiers[i];
+            miningNextStepRef.current = i + 1;
+            break; // ONE completed ad is enough: the ad closes and mining starts automatically
+          } else if (r.status === 'nofill') {
+            miningNextStepRef.current = i + 1; // this network has no ad right now -> continue with the next step
+          } else {
+            aborted = true; // closed midway -> stop here, the same ad can be watched again
+            break;
+          }
+        }
+        if (aborted) outcome = 'closed';
+        else if (miningCompletedRef.current >= 1) { outcome = 'reward'; finalTier = miningLastShownRef.current; }
+        else outcome = 'nofill';
+      } else {
+        // SPIN / GIFT BOX: only the dedicated ad of this slot (+ retry and Monetag backup)
+        const tier = tiers[tierIndex] || tiers[0];
+        const r = await tryTier(tier, true);
+        if (r.status === 'ok') { outcome = 'reward'; finalTier = r.shown || tier; }
+        else outcome = r.status === 'closed' ? 'closed' : 'nofill';
       }
-      console.warn(`[Ad] ${tier.provider} (${tier.id}) not completed: ${result.reason || 'unknown'}`);
+    } finally {
+      adRunningRef.current = false;
+      globalAdBusy = false;
+      endAdRedirectGuard();
     }
 
-    adRunningRef.current = false;
-    endAdRedirectGuard();
-
-    if (!isMountedRef.current) return;
+    if (!alive()) return;
     setTierFailReason(null);
+    setStatusNote('');
 
-    if (shownTier) {
-      // Ad was really shown and completed -> reward automatically (no waiting time)
+    if (outcome === 'reward' && finalTier) {
+      setMiningStep(null);
+      // All required ads were really shown -> automatic reward (no waiting time)
       await serverStartPromise; // make sure the server registered the start before the completion call
+      if (!watchTicketRef.current) {
+        isVerifyingRef.current = false;
+        setErrorMsg('Connection problem while starting the ad. Please try again.');
+        setStep('ERROR');
+        return;
+      }
       await handleClaimReward(
-        `WATERFALL_${String(shownTier.provider).toUpperCase()}_${shownTier.id}_SDK_COMPLETED`,
-        shownTier
+        `WATERFALL_${String(finalTier.provider).toUpperCase()}_${finalTier.id}_SDK_COMPLETED`,
+        finalTier
       );
+    } else if (outcome === 'closed') {
+      // Closed midway -> NO reward; the same ad can be started again
+      setTierFailReason(
+        isMining
+          ? 'Ad closed early - no reward. Tap "Watch Video Ad" to try again.'
+          : 'Ad closed early - no reward. Tap "Watch Video Ad" to try again.'
+      );
+      setStep('READY');
     } else {
-      // No ad was shown -> NO reward
+      // No ad could be shown -> NO reward
+      miningNextStepRef.current = 0;
+      miningCompletedRef.current = 0;
+      miningLastShownRef.current = null;
+      setMiningStep(null);
       setStep('ALL_FAILED');
     }
   };
@@ -528,7 +545,9 @@ export const UnifiedRewardedAdModal: React.FC<UnifiedRewardedAdModalProps> = ({
         userId,
         actionType,
         targetId,
-        signalToSubmit
+        signalToSubmit,
+        watchTicketRef.current,
+        currentTier?.provider
       );
 
       if (verifyRes.verified && verifyRes.claimToken) {
@@ -537,7 +556,6 @@ export const UnifiedRewardedAdModal: React.FC<UnifiedRewardedAdModalProps> = ({
 
         // Log Ad Event in Supabase e4f_ad_events
         const placementName = `${actionType}_${targetId || 1}`;
-        api.logAdEvent(userId, currentTier.provider, placementName, verifyRes.claimToken);
 
         setStep('COMPLETED');
         if (isMountedRef.current) {
@@ -565,50 +583,6 @@ export const UnifiedRewardedAdModal: React.FC<UnifiedRewardedAdModalProps> = ({
 
   // Determine current Tier target ad URL (real ad link for RichAds, Monetag, OnClickA)
   const activeAdUrl = renderedAdUrl || (currentTier ? getProviderAdUrl(currentTier.provider, currentTier.id) : '');
-
-  const handleOpenSponsorAd = async () => {
-    if (!currentTier) return;
-    if (currentTier.provider === 'RichAds' || String(currentTier.id).startsWith('4102')) {
-      if (typeof (window as any).showRichAdsInTelegram === 'function') {
-        try {
-          const ok = await (window as any).showRichAdsInTelegram(currentTier.id || '410204');
-          if (ok) {
-            handleClaimReward(`RICHADS_${currentTier.id || '410204'}_COMPLETED`);
-            return;
-          }
-        } catch (e) {
-          console.warn('[RichAds in-app error]:', e);
-        }
-      }
-      return;
-    }
-    if (currentTier.provider === 'Monetag') {
-      if (typeof (window as any).showMonetagInsideTelegram === 'function') {
-        try {
-          const ok = await (window as any).showMonetagInsideTelegram();
-          if (ok) {
-            handleClaimReward(`MONETAG_${currentTier.id || '12044377'}_COMPLETED`);
-            return;
-          }
-        } catch (e) {
-          console.warn('[Monetag in-app error]:', e);
-        }
-      } else {
-        const showFn = (window as any).show_12044377;
-        if (typeof showFn === 'function') {
-          try {
-            await showFn();
-            handleClaimReward(`MONETAG_${currentTier.id || '12044377'}_COMPLETED`);
-            return;
-          } catch (err2) {
-            console.warn('[Monetag interstitial error]:', err2);
-          }
-        }
-      }
-      return;
-    }
-    openExternalSponsorAd(activeAdUrl);
-  };
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/85 backdrop-blur-md overflow-y-auto">
@@ -702,7 +676,7 @@ export const UnifiedRewardedAdModal: React.FC<UnifiedRewardedAdModalProps> = ({
                 WATCH FULL ADS TO GET REWARD
               </div>
               <div className="text-[11px] font-semibold text-amber-400/90 uppercase tracking-wider">
-                AD IN PROGRESS • PLEASE WAIT
+                {`AD IN PROGRESS • ${statusNote || 'PLEASE WAIT'}${isMiningView && miningStep ? ` • AD ${miningStep}/${tiers.length}` : ''}`}
               </div>
             </div>
 
@@ -744,7 +718,7 @@ export const UnifiedRewardedAdModal: React.FC<UnifiedRewardedAdModalProps> = ({
 
                 <div className="w-full bg-slate-950 rounded-full h-2.5 overflow-hidden border border-slate-800">
                   <div
-                    className="h-full bg-gradient-to-r from-amber-500 to-emerald-400 transition-all duration-300 animate-pulse"
+                    className={`h-full bg-gradient-to-r from-amber-500 to-emerald-400 transition-all duration-300 animate-pulse`}
                     style={{ width: '100%' }}
                   />
                 </div>
@@ -859,6 +833,10 @@ export const UnifiedRewardedAdModal: React.FC<UnifiedRewardedAdModalProps> = ({
               <button
                 onClick={() => {
                   setTierIndex(0);
+                  miningNextStepRef.current = 0;
+                  miningCompletedRef.current = 0;
+                  miningLastShownRef.current = null;
+                  setMiningStep(null);
                   setStep('READY');
                 }}
                 className="flex-1 py-2.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold text-xs shadow transition-all cursor-pointer flex items-center justify-center gap-1.5"
@@ -887,7 +865,13 @@ export const UnifiedRewardedAdModal: React.FC<UnifiedRewardedAdModalProps> = ({
             </div>
 
             <button
-              onClick={() => advanceWaterfall('Ad error occurred')}
+              onClick={() => {
+                if (!adSession) {
+                  setInitNonce(n => n + 1);
+                } else {
+                  advanceWaterfall('Ad error occurred');
+                }
+              }}
               className="w-full py-2.5 rounded-xl bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 text-slate-950 font-bold text-xs shadow transition-all cursor-pointer block"
             >
               Try Again

@@ -380,6 +380,7 @@ export function saveLocalDailyCheckIn(_userId: string, _state: DailyCheckInState
   // Pure server-authoritative state backed by public.e4f_daily_checkins (No local storage tampering)
 }
 
+const taskTimerTokens: Record<string, string> = {};
 export const api = {
   // Auth
   async loginTelegram(
@@ -571,7 +572,7 @@ export const api = {
   // User Profile & Balances
   async getProfile(userId: string): Promise<{ user: UserAccount; balances: WalletBalances; recentTransactions: TransactionRecord[]; serverTime: number }> {
     try {
-      const res = await fetch(`/api/user/${userId}/profile`);
+      const res = await fetch(`/api/user/${userId}/profile`, { headers: api.getUserAuthHeaders() });
       const data = await parseResponseJson(res);
       if (res.ok && data && data.user) {
         if (data.user.telegramId === 8827675419 || userId === 'usr_8827675419') {
@@ -609,7 +610,7 @@ export const api = {
   // Mining
   async getMiningStatus(userId: string): Promise<MiningStats & { miningRatePerHour: number; durationHours: number; adRequired: boolean; adProvider: string; plannedTargetPriceRange: string; canMine?: boolean; timeRemainingMs?: number; minedSoFar?: number }> {
     try {
-      const res = await fetch(`/api/mining/${userId}/status`);
+      const res = await fetch(`/api/mining/${userId}/status`, { headers: api.getUserAuthHeaders() });
       const data = await parseResponseJson(res);
       if (res.ok && data) return data;
     } catch {}
@@ -676,7 +677,7 @@ export const api = {
     serverTime: number;
   }> {
     try {
-      const res = await fetch(`/api/mining/${userId}/ad-session`);
+      const res = await fetch(`/api/mining/${userId}/ad-session`, { headers: api.getUserAuthHeaders() });
       const data = await parseResponseJson(res);
       if (res.ok && data) return data;
     } catch {}
@@ -686,75 +687,6 @@ export const api = {
       session: null,
       serverTime: Date.now(),
     };
-  },
-
-  async createAdSession(userId: string): Promise<{
-    success: boolean;
-    isExistingSession?: boolean;
-    sessionId: string;
-    token: string;
-    startedAt: number;
-    endsAt: number;
-    durationSeconds: number;
-    remainingSeconds: number;
-    canVerify: boolean;
-    verified: boolean;
-    serverTime: number;
-    provider: 'ADSTERRA' | 'MONETAG' | 'SIMULATOR';
-    adDirectLink?: string;
-    adsterraDirectLink?: string;
-    monetagDirectLink?: string;
-  }> {
-    try {
-      const res = await fetch('/api/mining/ad-session', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ userId }),
-      });
-      const data = await parseResponseJson(res);
-      if (res.ok && data && data.sessionId) return data;
-    } catch {}
-    const now = Date.now();
-    return {
-      success: true,
-      sessionId: `ad_${now}`,
-      token: `tok_${Math.random().toString(36).slice(2)}`,
-      startedAt: now,
-      endsAt: now + 30000,
-      durationSeconds: 30,
-      remainingSeconds: 30,
-      canVerify: false,
-      verified: false,
-      serverTime: now,
-      provider: 'MONETAG',
-      monetagDirectLink: '',
-    };
-  },
-
-  async startAdPlayback(sessionId: string, token: string): Promise<{ success: boolean; startedPlaybackAt: number }> {
-    try {
-      const res = await fetch('/api/mining/start-ad-playback', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ sessionId, token }),
-      });
-      const data = await parseResponseJson(res);
-      if (res.ok && data) return data;
-    } catch {}
-    return { success: true, startedPlaybackAt: Date.now() };
-  },
-
-  async verifyAdSession(sessionId: string, token: string, userId?: string): Promise<{ success: boolean; verified: boolean; sessionId?: string; remainingSeconds?: number; serverTime?: number }> {
-    try {
-      const res = await fetch('/api/mining/verify-ad', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ sessionId, token, userId }),
-      });
-      const data = await parseResponseJson(res);
-      if (res.ok && data) return data;
-    } catch {}
-    return { success: true, verified: true, sessionId, remainingSeconds: 0, serverTime: Date.now() };
   },
 
   async createUniversalAdSession(
@@ -772,90 +704,54 @@ export const api = {
     provider: string;
     serverTime: number;
     durationSeconds?: number;
+    tiers?: Array<{ index: number; provider: 'RichAds' | 'Monetag' | 'OnClickA'; id: string; label: string }>;
   }> {
+    // No local/fake session is ever created. If the server says no, the user gets the real reason.
+    let res: Response;
     try {
-      const res = await fetch('/api/ads/session/create', {
+      res = await fetch('/api/ads/session/create', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: api.getUserAuthHeaders(),
         body: JSON.stringify({ userId, actionType, targetId }),
       });
-      const data = await parseResponseJson(res);
-      if (res.ok && data && data.sessionId) return data;
-    } catch {}
-    const now = Date.now();
-    return {
-      success: true,
-      sessionId: `uni_${now}`,
-      token: `tok_${Math.random().toString(36).slice(2)}`,
-      actionType,
-      targetId,
-      zoneId: '410204',
-      directLink: '',
-      provider: 'RichAds',
-      serverTime: now,
-      durationSeconds: 30,
-    };
+    } catch {
+      throw new Error('Network error. Please check your connection and try again.');
+    }
+    const data = await parseResponseJson(res);
+    if (res.ok && data && data.sessionId) return data;
+    throw new Error((data && data.error) || 'Could not start the ad. Please try again.');
   },
 
-  async logAdView(userId: string, network: string, placement: string): Promise<void> {
-    try {
-      if (supabaseClient) {
-        Promise.resolve(supabaseClient.from('e4f_ad_views').insert({
-          user_id: userId,
-          network,
-          placement,
-          created_at: new Date().toISOString(),
-        })).catch(() => {});
-      }
-      fetch('/api/ads/log-view', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ userId, network, placement }),
-      }).catch(() => {});
-    } catch {}
+  async logAdView(_userId: string, _network: string, _placement: string): Promise<void> {
+    // Ad views are recorded by the server when the ad session is created.
   },
 
-  async logAdEvent(userId: string, network: string, placement: string, rewardToken: string): Promise<void> {
-    try {
-      if (supabaseClient) {
-        Promise.resolve(supabaseClient.from('e4f_ad_events').insert({
-          user_id: userId,
-          network,
-          placement,
-          reward_token: rewardToken,
-          created_at: new Date().toISOString(),
-        })).catch(() => {});
-      }
-      fetch('/api/ads/log-event', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ userId, network, placement, rewardToken }),
-      }).catch(() => {});
-    } catch {}
+  async logAdEvent(_userId: string, _network: string, _placement: string, _rewardToken: string): Promise<void> {
+    // Ad completions are recorded by the server when the reward token is issued.
   },
 
   async startAdWatching(
     sessionId: string,
     token: string,
     userId: string
-  ): Promise<{ success: boolean; startedAt: number; serverTime: number }> {
+  ): Promise<{ success: boolean; startedAt: number; serverTime: number; watchTicket?: string }> {
     try {
       const res = await fetch('/api/ads/session/start-watching', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: api.getUserAuthHeaders(),
         body: JSON.stringify({ sessionId, token, userId }),
       });
       const data = await parseResponseJson(res);
-      if (res.ok && data) return data;
+      if (res.ok && data && data.watchTicket) return data;
     } catch {}
-    return { success: true, startedAt: Date.now(), serverTime: Date.now() };
+    return { success: false, startedAt: 0, serverTime: Date.now() };
   },
 
   async cancelAdSession(sessionId: string, token: string, userId?: string): Promise<void> {
     try {
       await fetch('/api/ads/session/cancel', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: api.getUserAuthHeaders(),
         body: JSON.stringify({ sessionId, token, userId }),
       });
     } catch {
@@ -869,7 +765,9 @@ export const api = {
     userId: string,
     actionType?: string,
     targetId?: number,
-    sdkSignal: string = 'MONETAG_REWARDED_COMPLETED'
+    sdkSignal: string = '',
+    watchTicket?: string,
+    network?: string
   ): Promise<{
     success: boolean;
     verified: boolean;
@@ -877,101 +775,65 @@ export const api = {
     claimToken: string;
     serverTime: number;
   }> {
+    // The reward token can ONLY come from the server. There is no local fallback.
+    let res: Response;
     try {
-      const res = await fetch('/api/ads/session/complete', {
+      res = await fetch('/api/ads/session/complete', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ sessionId, token, userId, actionType, targetId, sdkSignal }),
+        headers: api.getUserAuthHeaders(),
+        body: JSON.stringify({ sessionId, token, userId, actionType, targetId, sdkSignal, watchTicket, network }),
       });
-      const data = await parseResponseJson(res);
-      if (res.ok && data && data.verified) return data;
-      if (data && data.error && !res.ok) {
-        throw new Error(data.error);
-      }
-    } catch (err: any) {
-      if (err.message && (err.message.includes('remaining') || err.message.includes('Minimum'))) {
-        throw err;
-      }
+    } catch {
+      throw new Error('Network error while verifying the ad. Please try again.');
     }
-    return {
-      success: true,
-      verified: true,
-      sessionId,
-      claimToken: `clm_${Math.random().toString(36).slice(2)}`,
-      serverTime: Date.now(),
-    };
+    const data = await parseResponseJson(res);
+    if (res.ok && data && data.verified && data.claimToken) return data;
+    throw new Error((data && data.error) || 'Could not verify the ad. Please try again.');
   },
 
   async startMining(userId: string, adSessionId?: string, claimToken?: string): Promise<{ success: boolean; session: any; serverTime: number }> {
+    let res: Response;
     try {
-      const res = await fetch('/api/mining/start', {
+      res = await fetch('/api/mining/start', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: api.getUserAuthHeaders(),
         body: JSON.stringify({ userId, adSessionId, claimToken }),
       });
-      const data = await parseResponseJson(res);
-      if (res.ok && data && data.session) return data;
-    } catch {}
-
-    const now = Date.now();
-    const durationSeconds = 8 * 3600;
-    const session = {
-      id: `mine_${now}`,
-      userId,
-      startTime: now,
-      endTime: now + durationSeconds * 1000,
-      durationSeconds,
-      miningRatePerHour: 0.25,
-      estimatedReward: 2.0,
-      status: 'ACTIVE' as const,
-      adVerified: true,
-      adSessionId,
-    };
-    try {
-      if (typeof window !== 'undefined') {
-        localStorage.setItem(`e4f_mining_${userId}`, JSON.stringify(session));
-      }
-    } catch {}
-
-    return { success: true, session, serverTime: now };
+    } catch {
+      throw new Error('Network error. Please check your connection and try again.');
+    }
+    const data = await parseResponseJson(res);
+    if (res.ok && data && data.session) return data;
+    throw new Error((data && data.error) || 'Could not start mining. Please try again.');
   },
 
   async claimMiningReward(userId: string, sessionId: string): Promise<{ success: boolean; rewardAmount: number; asset: string; newBalance: number }> {
+    let res: Response;
     try {
-      const res = await fetch('/api/mining/claim', {
+      res = await fetch('/api/mining/claim', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: api.getUserAuthHeaders(),
         body: JSON.stringify({ userId, sessionId }),
       });
-      const data = await parseResponseJson(res);
-      if (res.ok && data && data.success) {
-        const balances = getLocalBalances();
-        balances.e4f = Number((data.newBalance || balances.e4f + 2.0).toFixed(4));
-        saveLocalBalances(balances);
-        try {
-          if (typeof window !== 'undefined') {
-            localStorage.removeItem(`e4f_mining_${userId}`);
-          }
-        } catch {}
-        return data;
-      }
-    } catch {}
-
-    const balances = getLocalBalances();
-    balances.e4f = Number(((balances.e4f || 0) + 2.0).toFixed(4));
-    saveLocalBalances(balances);
-    try {
-      if (typeof window !== 'undefined') {
-        localStorage.removeItem(`e4f_mining_${userId}`);
-      }
-    } catch {}
-
-    return { success: true, rewardAmount: 2.0, asset: 'E4F', newBalance: balances.e4f };
+    } catch {
+      throw new Error('Network error. Please check your connection and try again.');
+    }
+    const data = await parseResponseJson(res);
+    if (res.ok && data && data.success) {
+      const balances = getLocalBalances();
+      balances.e4f = Number((data.newBalance ?? balances.e4f).toFixed(4));
+      saveLocalBalances(balances);
+      try {
+        if (typeof window !== 'undefined') localStorage.removeItem(`e4f_mining_${userId}`);
+      } catch {}
+      return data;
+    }
+    throw new Error((data && data.error) || 'Could not claim the mining reward. Please try again.');
   },
 
   async getMiningHistory(userId: string): Promise<{ history: any[] }> {
     try {
-      const res = await fetch(`/api/mining/${userId}/history`);
+      const res = await fetch(`/api/mining/${userId}/history`, { headers: api.getUserAuthHeaders() });
       const data = await parseResponseJson(res);
       if (res.ok && data) return data;
     } catch {}
@@ -981,7 +843,7 @@ export const api = {
   // Rewards
   async getDailyCheckIn(userId: string): Promise<DailyCheckInState> {
     try {
-      const res = await fetch(`/api/rewards/${userId}/daily-checkin`);
+      const res = await fetch(`/api/rewards/${userId}/daily-checkin`, { headers: api.getUserAuthHeaders() });
       const data = await parseResponseJson<DailyCheckInState>(res);
       if (res.ok && data && typeof data.currentStreak === 'number') {
         saveLocalDailyCheckIn(userId, data);
@@ -995,7 +857,7 @@ export const api = {
     try {
       const res = await fetch('/api/rewards/daily-checkin/claim', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: api.getUserAuthHeaders(),
         body: JSON.stringify({ userId }),
       });
       const data = await parseResponseJson(res);
@@ -1035,55 +897,22 @@ export const api = {
   },
 
   async spinWheel(userId: string, adSessionId?: string, claimToken?: string): Promise<{ success: boolean; prizeIndex: number; prize: any; balances: WalletBalances; spinsRemainingToday?: number; spinsUsedToday?: number }> {
+    let res: Response;
     try {
-      const res = await fetch('/api/rewards/spin', {
+      res = await fetch('/api/rewards/spin', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: api.getUserAuthHeaders(),
         body: JSON.stringify({ userId, adSessionId, claimToken }),
       });
-      const data = await parseResponseJson(res);
-      if (res.ok && data && data.success) {
-        if (data.balances) saveLocalBalances(data.balances);
-        return data;
-      }
-      if (data && data.error) {
-        throw new Error(data.error);
-      }
-    } catch (e: any) {
-      if (e?.message && e.message !== 'Failed to fetch') {
-        throw e;
-      }
+    } catch {
+      throw new Error('Network error. Please check your connection and try again.');
     }
-
-    const prizes = [
-      { id: 0, label: '0.25 E4F', asset: 'E4F' as const, amount: 0.25, color: '#3B82F6' },
-      { id: 1, label: '0.50 USDT', asset: 'USDT' as const, amount: 0.50, color: '#10B981' },
-      { id: 2, label: '1.00 E4F', asset: 'E4F' as const, amount: 1.00, color: '#EAB308' },
-      { id: 3, label: '0.10 USDT', asset: 'USDT' as const, amount: 0.10, color: '#6366F1' },
-      { id: 4, label: '2.50 E4F', asset: 'E4F' as const, amount: 2.50, color: '#EC4899' },
-      { id: 5, label: '1.00 USDT', asset: 'USDT' as const, amount: 1.00, color: '#14B8A6' },
-      { id: 6, label: '5.00 E4F', asset: 'E4F' as const, amount: 5.00, color: '#F97316' },
-      { id: 7, label: '0.20 USDT', asset: 'USDT' as const, amount: 0.20, color: '#8B5CF6' },
-    ];
-    const prizeIndex = Math.floor(Math.random() * prizes.length);
-    const prize = prizes[prizeIndex];
-
-    const balances = getLocalBalances();
-    if (prize.asset === 'USDT') {
-      balances.usdt = Number(((balances.usdt || 0) + prize.amount).toFixed(4));
-    } else {
-      balances.e4f = Number(((balances.e4f || 0) + prize.amount).toFixed(4));
+    const data = await parseResponseJson(res);
+    if (res.ok && data && data.success) {
+      if (data.balances) saveLocalBalances(data.balances);
+      return data;
     }
-    saveLocalBalances(balances);
-
-    return {
-      success: true,
-      prizeIndex,
-      prize,
-      balances,
-      spinsRemainingToday: 4,
-      spinsUsedToday: 1,
-    };
+    throw new Error((data && data.error) || 'Spin failed. Please try again.');
   },
 
   async getGiftBoxes(userId: string): Promise<{
@@ -1097,7 +926,7 @@ export const api = {
     provider?: string;
   }> {
     try {
-      const res = await fetch(`/api/rewards/${userId}/gift-boxes`);
+      const res = await fetch(`/api/rewards/${userId}/gift-boxes`, { headers: api.getUserAuthHeaders() });
       const data = await parseResponseJson(res);
       if (res.ok && data && data.boxes && data.boxes.length > 0) return data;
     } catch (e) {
@@ -1129,52 +958,28 @@ export const api = {
     boxesUsedToday?: number;
     maxDailyBoxes?: number;
   }> {
+    let res: Response;
     try {
-      const res = await fetch('/api/rewards/gift-box/open', {
+      res = await fetch('/api/rewards/gift-box/open', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: api.getUserAuthHeaders(),
         body: JSON.stringify({ userId, boxId, adSessionId, claimToken }),
       });
-      const data = await parseResponseJson(res);
-      if (res.ok && data && data.success) {
-        if (data.balances) saveLocalBalances(data.balances);
-        return data;
-      }
-    } catch {}
-
-    const boxes = [
-      { id: 1, boxNumber: 1, name: 'Bronze Treasure', rewardAsset: 'E4F' as const, rewardAmount: 2.5, color: '#38BDF8', isOpened: true },
-      { id: 2, boxNumber: 2, name: 'Silver Cache', rewardAsset: 'USDT' as const, rewardAmount: 1.5, color: '#A855F7', isOpened: true },
-      { id: 3, boxNumber: 3, name: 'Gold Vault', rewardAsset: 'E4F' as const, rewardAmount: 5.0, color: '#EAB308', isOpened: true },
-      { id: 4, boxNumber: 4, name: 'Ruby Chest', rewardAsset: 'USDT' as const, rewardAmount: 3.0, color: '#EF4444', isOpened: true },
-      { id: 5, boxNumber: 5, name: 'Diamond Relic', rewardAsset: 'E4F' as const, rewardAmount: 10.0, color: '#10B981', isOpened: true },
-    ];
-    const box = boxes.find(b => b.id === boxId) || boxes[0];
-
-    const balances = getLocalBalances();
-    if (box.rewardAsset === 'USDT') {
-      balances.usdt = Number(((balances.usdt || 0) + box.rewardAmount).toFixed(4));
-    } else {
-      balances.e4f = Number(((balances.e4f || 0) + box.rewardAmount).toFixed(4));
+    } catch {
+      throw new Error('Network error. Please check your connection and try again.');
     }
-    saveLocalBalances(balances);
-
-    return {
-      success: true,
-      box,
-      rewardAmount: box.rewardAmount,
-      rewardAsset: box.rewardAsset,
-      balances,
-      boxesRemainingToday: 4,
-      boxesUsedToday: 1,
-      maxDailyBoxes: 5,
-    };
+    const data = await parseResponseJson(res);
+    if (res.ok && data && data.success) {
+      if (data.balances) saveLocalBalances(data.balances);
+      return data;
+    }
+    throw new Error((data && data.error) || 'Could not open the gift box. Please try again.');
   },
 
   // Tasks
   async getTasks(userId: string): Promise<{ tasks: SocialTask[] }> {
     try {
-      const res = await fetch(`/api/tasks/${userId}`);
+      const res = await fetch(`/api/tasks/${userId}`, { headers: api.getUserAuthHeaders() });
       const data = await parseResponseJson(res);
       if (res.ok && data && Array.isArray(data.tasks)) return data;
     } catch {}
@@ -1189,144 +994,57 @@ export const api = {
     const payload = typeof proofData === 'string'
       ? { userId, taskId, proof: proofData, usernameOrLink: proofData }
       : { userId, taskId, ...(proofData || {}) };
-
-    try {
-      const res = await fetch('/api/tasks/submit', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
-      });
-      const data = await parseResponseJson(res);
-      if (res.ok && data && data.success) return data;
-    } catch {}
-
-    const tasks = getLocalTasks(userId);
-    const task = tasks.find(t => t.id === taskId);
-    if (task) {
-      task.status = 'SUBMITTED';
-      task.submittedProof = typeof proofData === 'string' ? proofData : proofData?.proof || proofData?.usernameOrLink;
-      saveLocalTasks(userId, tasks);
-    }
-    return { success: true, message: 'Proof submitted for Administrator review' };
+    const res = await fetch('/api/tasks/submit', {
+      method: 'POST',
+      headers: api.getUserAuthHeaders(),
+      body: JSON.stringify(payload),
+    });
+    const data = await parseResponseJson(res);
+    if (res.ok && data && data.success) return data;
+    throw new Error((data && data.error) || 'Could not submit. Please try again.');
   },
 
   async claimTask(userId: string, taskId: string): Promise<any> {
-    try {
-      const res = await fetch('/api/tasks/submit', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ userId, taskId, proof: 'auto_verified' }),
-      });
-      const data = await parseResponseJson(res);
-      if (res.ok && data && data.success) {
-        if (data.balances) saveLocalBalances(data.balances);
-        return data;
-      }
-    } catch {}
-
-    const tasks = getLocalTasks(userId);
-    const task = tasks.find(t => t.id === taskId);
-    const rewardAmount = task ? task.rewardAmount : 1.0;
-    const rewardAsset = task ? task.rewardAsset : 'USDT';
-
-    if (task) {
-      task.isCompleted = true;
-      task.status = 'APPROVED';
-      saveLocalTasks(userId, tasks);
+    const res = await fetch('/api/tasks/submit', {
+      method: 'POST',
+      headers: api.getUserAuthHeaders(),
+      body: JSON.stringify({ userId, taskId, proof: 'auto_verified' }),
+    });
+    const data = await parseResponseJson(res);
+    if (res.ok && data && data.success) {
+      if (data.balances) saveLocalBalances(data.balances);
+      return data;
     }
-
-    const balances = getLocalBalances();
-    if (rewardAsset === 'USDT') {
-      balances.usdt = Number(((balances.usdt || 0) + rewardAmount).toFixed(4));
-    } else {
-      balances.e4f = Number(((balances.e4f || 0) + rewardAmount).toFixed(4));
-    }
-    saveLocalBalances(balances);
-
-    return {
-      success: true,
-      rewardAmount,
-      rewardAsset,
-      balances,
-    };
+    throw new Error((data && data.error) || 'Could not claim the task. Please try again.');
   },
 
   async startTaskTimer(userId: string, taskId: string, accumulatedSeconds?: number): Promise<{ success: boolean; startTime: number; durationSeconds: number; url: string }> {
-    try {
-      const res = await fetch('/api/tasks/start-timer', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ userId, taskId, accumulatedSeconds }),
-      });
-      const data = await parseResponseJson(res);
-      if (res.ok && data && data.success) return data;
-    } catch {}
-
-    const tasks = getLocalTasks(userId);
-    const task = tasks.find(t => t.id === taskId);
-    return {
-      success: true,
-      startTime: Date.now(),
-      durationSeconds: task?.durationSeconds || 30,
-      url: task?.url || 'https://e4f-exchange.org',
-    };
+    const res = await fetch('/api/tasks/start-timer', {
+      method: 'POST',
+      headers: api.getUserAuthHeaders(),
+      body: JSON.stringify({ userId, taskId, accumulatedSeconds, timerToken: taskTimerTokens[`${userId}_${taskId}`] }),
+    });
+    const data = await parseResponseJson(res);
+    if (res.ok && data && data.success) {
+      if (data.timerToken) taskTimerTokens[`${userId}_${taskId}`] = data.timerToken;
+      return data;
+    }
+    throw new Error((data && data.error) || 'Could not start the task. Please try again.');
   },
 
   async verifyTaskTimer(userId: string, taskId: string, accumulatedSeconds?: number): Promise<any> {
-    try {
-      const res = await fetch('/api/tasks/verify-timer', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ userId, taskId, accumulatedSeconds }),
-      });
-      const data = await parseResponseJson(res);
-      if (res.ok && data && data.success) {
-        if (data.balances) saveLocalBalances(data.balances);
-        return data;
-      }
-    } catch {}
-
-    const tasks = getLocalTasks(userId);
-    const task = tasks.find(t => t.id === taskId);
-    const rewardAmount = task ? task.rewardAmount : 1.0;
-    const rewardAsset = task ? task.rewardAsset : 'USDT';
-
-    if (task) {
-      task.isCompleted = true;
-      task.status = 'APPROVED';
-      saveLocalTasks(userId, tasks);
+    const res = await fetch('/api/tasks/verify-timer', {
+      method: 'POST',
+      headers: api.getUserAuthHeaders(),
+      body: JSON.stringify({ userId, taskId, accumulatedSeconds, timerToken: taskTimerTokens[`${userId}_${taskId}`] }),
+    });
+    const data = await parseResponseJson(res);
+    if (res.ok && data && data.success) {
+      delete taskTimerTokens[`${userId}_${taskId}`];
+      if (data.balances) saveLocalBalances(data.balances);
+      return data;
     }
-
-    const balances = getLocalBalances();
-    if (rewardAsset === 'USDT') {
-      balances.usdt = Number(((balances.usdt || 0) + rewardAmount).toFixed(4));
-    } else {
-      balances.e4f = Number(((balances.e4f || 0) + rewardAmount).toFixed(4));
-    }
-    saveLocalBalances(balances);
-
-    try {
-      const tx: TransactionRecord = {
-        id: `tx_${Date.now()}_task`,
-        userId,
-        asset: rewardAsset as any,
-        amount: rewardAmount,
-        direction: 'IN',
-        source: 'TASK_REWARD',
-        status: 'COMPLETED',
-        timestamp: Date.now(),
-        referenceId: taskId,
-        note: `Completed task: ${task?.title || taskId}`,
-      };
-      saveLocalTransaction(userId, tx);
-    } catch {}
-
-    return {
-      success: true,
-      rewardAmount,
-      rewardAsset,
-      balances,
-    };
+    throw new Error((data && data.error) || 'Verification failed. Please try again.');
   },
 
   async getSpinStatus(userId: string): Promise<{
@@ -1339,7 +1057,7 @@ export const api = {
     provider?: string;
   }> {
     try {
-      const res = await fetch(`/api/rewards/${userId}/spin-status`);
+      const res = await fetch(`/api/rewards/${userId}/spin-status`, { headers: api.getUserAuthHeaders() });
       const data = await parseResponseJson(res);
       if (res.ok && data && typeof data.spinsRemainingToday === 'number') return data;
     } catch {}
@@ -1378,7 +1096,7 @@ export const api = {
     try {
       const res = await fetch(`/api/user/${userId}/delete`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: api.getUserAuthHeaders(),
         body: JSON.stringify({ confirmText }),
       });
       const data = await parseResponseJson(res);
@@ -1400,7 +1118,7 @@ export const api = {
     try {
       const res = await fetch(`/api/user/${userId}/username`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: api.getUserAuthHeaders(),
         body: JSON.stringify({ username }),
       });
       const data = await parseResponseJson(res);
@@ -1415,18 +1133,12 @@ export const api = {
     return { success: false, user: null, message: 'User not found' };
   },
 
-  async verifyAccount(userId: string, txHash?: string): Promise<{ success: boolean; message: string; user: any; balances?: any; depositBalance?: number; isVerified: boolean }> {
-    const res = await fetch(`/api/user/${userId}/verify-account`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ txHash }),
-    });
+  async getTrustedMinerStatus(userId: string): Promise<{ success: boolean; streakDays: number; requiredDays: number; isVerified: boolean }> {
+    const res = await fetch(`/api/user/${userId}/trusted-miner`, { headers: api.getUserAuthHeaders() });
     const data = await parseResponseJson(res);
     if (!res.ok || !data?.success) {
-      throw new Error(data?.error || data?.message || 'Verification failed');
+      throw new Error(data?.error || 'Failed to load verification status');
     }
-    if (data.balances) saveLocalBalances(data.balances);
-    if (data.user) saveLocalUser(data.user);
     return data;
   },
 
@@ -1501,7 +1213,7 @@ export const api = {
   // Referral
   async getReferrals(userId: string): Promise<any> {
     try {
-      const res = await fetch(`/api/referrals/${userId}`);
+      const res = await fetch(`/api/referrals/${userId}`, { headers: api.getUserAuthHeaders() });
       const data = await parseResponseJson(res);
       if (res.ok && data) {
         if (userId === 'usr_8827675419' || getLocalUser()?.telegramId === 8827675419) {
@@ -1677,7 +1389,7 @@ export const api = {
     try {
       const res = await fetch('/api/trade/order', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: api.getUserAuthHeaders(),
         body: JSON.stringify({ userId, ...orderData }),
       });
       const data = await parseResponseJson(res);
@@ -1766,7 +1478,7 @@ export const api = {
   async getOrders(userId: string): Promise<{ orders: SpotOrder[] }> {
     let serverOrders: SpotOrder[] = [];
     try {
-      const res = await fetch(`/api/trade/${userId}/orders`);
+      const res = await fetch(`/api/trade/${userId}/orders`, { headers: api.getUserAuthHeaders() });
       const data = await parseResponseJson(res);
       if (res.ok && data && Array.isArray(data.orders)) {
         serverOrders = data.orders;
@@ -1843,7 +1555,7 @@ export const api = {
   async getWithdrawals(userId: string): Promise<WithdrawalRecord[]> {
     let serverWds: WithdrawalRecord[] = [];
     try {
-      const res = await fetch(`/api/withdrawals/${userId}`);
+      const res = await fetch(`/api/withdrawals/${userId}`, { headers: api.getUserAuthHeaders() });
       const data = await parseResponseJson(res);
       if (res.ok && data && Array.isArray(data.withdrawals)) {
         serverWds = data.withdrawals;
@@ -1885,7 +1597,7 @@ export const api = {
   // Support
   async getSupportTickets(userId: string): Promise<{ tickets: SupportTicket[] }> {
     try {
-      const res = await fetch(`/api/support/${userId}/tickets`);
+      const res = await fetch(`/api/support/${userId}/tickets`, { headers: api.getUserAuthHeaders() });
       const data = await parseResponseJson(res);
       if (res.ok && data && Array.isArray(data.tickets)) return data;
     } catch {}
@@ -1901,7 +1613,7 @@ export const api = {
     try {
       const res = await fetch('/api/support/create', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: api.getUserAuthHeaders(),
         body: JSON.stringify({ userId, subject, message }),
       });
       const data = await parseResponseJson(res);
@@ -1927,13 +1639,8 @@ export const api = {
   // Admin
   async adminLogin(pin: string, key?: string): Promise<{ success: boolean; token: string; key?: string; role: string }> {
     const cleanPassword = (pin || key || '').trim();
-    let tgId: any = undefined;
-    try {
-      tgId = (window as any).Telegram?.WebApp?.initDataUnsafe?.user?.id;
-    } catch {}
-    const payload = JSON.stringify({ password: cleanPassword, telegramId: tgId });
+    const payload = JSON.stringify({ password: cleanPassword });
     const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-    if (tgId) headers['x-telegram-id'] = String(tgId);
     let res = await fetch('/api/admin/login', {
       method: 'POST',
       headers,
@@ -1970,15 +1677,10 @@ export const api = {
   getAdminHeaders(adminKey?: string): Record<string, string> {
     const token = typeof window !== 'undefined' ? (localStorage.getItem('e4f_admin_token') || '') : '';
     const savedKey = typeof window !== 'undefined' ? localStorage.getItem('e4f_admin_key') : null;
-    let tgId: any = undefined;
-    try {
-      tgId = (window as any).Telegram?.WebApp?.initDataUnsafe?.user?.id;
-    } catch {}
     const headers: Record<string, string> = {
       'Content-Type': 'application/json',
     };
     if (token) headers['x-admin-token'] = token;
-    if (tgId) headers['x-telegram-id'] = String(tgId);
     const effectiveKey = adminKey || savedKey;
     if (effectiveKey) headers['x-admin-key'] = effectiveKey;
     return headers;

@@ -1,4 +1,4 @@
-import express, { Request, Response } from 'express';
+import express, { Request, Response, NextFunction } from 'express';
 import path from 'path';
 import crypto from 'crypto';
 import fs from 'fs';
@@ -12,7 +12,8 @@ process.on('warning', (warning) => {
 });
 
 const SUPABASE_URL = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL || '';
-const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_ANON_KEY || process.env.VITE_SUPABASE_ANON_KEY || '';
+// Server database access uses ONLY the service-role key (never an anon / VITE_ key).
+const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || '';
 
 export const supabase: SupabaseClient | null = (SUPABASE_URL && SUPABASE_SERVICE_ROLE_KEY)
   ? createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
@@ -45,7 +46,20 @@ const app = express();
 const PORT = 3000;
 
 const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || process.env.BOT_TOKEN || '';
-const SESSION_SECRET_KEY = process.env.SESSION_SECRET || process.env.ADMIN_SECRET || 'e4f_session_signing_secret_key_2028';
+const SESSION_SECRET_KEY: string = (() => {
+  if (process.env.SESSION_SECRET) return process.env.SESSION_SECRET;
+  // Stable across serverless instances, derived only from secrets that exist in the server environment.
+  const seed = [
+    process.env.TELEGRAM_BOT_TOKEN || process.env.BOT_TOKEN || '',
+    process.env.ADMIN_SECRET || process.env.ADMIN_PASSWORD || '',
+    process.env.SUPABASE_SERVICE_ROLE_KEY || '',
+  ].join('|');
+  if (seed.replace(/\|/g, '')) {
+    return crypto.createHash('sha256').update('e4f-session-v2|' + seed).digest('hex');
+  }
+  console.error('[SECURITY] SESSION_SECRET (or TELEGRAM_BOT_TOKEN / ADMIN_SECRET) is not set. Using a random secret: sessions will not survive restarts.');
+  return crypto.randomBytes(32).toString('hex');
+})();
 
 export function verifyTelegramInitData(initData: string, botToken: string): { valid: boolean; user?: any; error?: string } {
   try {
@@ -120,13 +134,6 @@ function requireUserAuth(req: Request, res: Response, next: () => void) {
     ? authHeader.slice(7).trim()
     : ((req.headers['x-session-token'] as string) || '').trim();
 
-  // Admin access bypass for administrative actions
-  const adminKey = ((req.headers['x-admin-key'] as string) || '').trim();
-  const adminToken = ((req.headers['x-admin-token'] as string) || '').trim();
-  if ((adminToken && verifyAdminSessionToken(adminToken)) || (adminKey && verifyAdminPassword(adminKey)) || (ADMIN_SECRET && adminKey === ADMIN_SECRET)) {
-    return next();
-  }
-
   if (token) {
     const verified = verifyUserSessionToken(token);
     if (verified.valid && verified.userId) {
@@ -182,9 +189,23 @@ app.use((req: any, res: Response, next) => {
 
 // Enable CORS for all incoming requests (crucial for iframe preview & API requests)
 app.use((req, res, next) => {
-  res.header('Access-Control-Allow-Origin', '*');
+  const origin = String(req.headers.origin || '');
+  if (origin) {
+    let allowed = false;
+    try {
+      const oh = new URL(origin).host;
+      const extra = [process.env.APP_URL || '', ...(process.env.ALLOWED_ORIGINS || '').split(',')]
+        .map(x => x.trim()).filter(Boolean)
+        .map(x => { try { return new URL(x).host; } catch { return x; } });
+      allowed = oh === String(req.headers.host || '') || extra.includes(oh) || (!isProduction && /^(localhost|127\.0\.0\.1)(:\d+)?$/.test(oh));
+    } catch {}
+    if (allowed) {
+      res.header('Access-Control-Allow-Origin', origin);
+      res.header('Vary', 'Origin');
+    }
+  }
   res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS, PATCH');
-  res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, Authorization, x-admin-key, x-admin-token');
+  res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, Authorization, x-session-token, x-admin-key, x-admin-token');
   if (req.method === 'OPTIONS') {
     return res.sendStatus(200);
   }
@@ -374,6 +395,7 @@ const systemSettings = {
   miningRatePerHour: 0.25,
   miningDurationHours: 8,
   rewardedAdRequired: true,
+  adMinWatchSeconds: 5,
   adMiningDurationSeconds: 30,
   miningAdDurationSeconds: 30,
   spinAdDurationSeconds: 30,
@@ -1299,6 +1321,7 @@ function initializeServerState() {
         delete (systemSettings as any).box_05_adexora;
         delete (systemSettings as any).mining_01_adsgram;
         delete (systemSettings as any).mining_05_adexora;
+        normalizeAdSlotSettings();
 
         const OLD_PLACEHOLDERS = new Set(['54110', '54111', '410260']);
         let needsDbSync = false;
@@ -1807,58 +1830,36 @@ app.post('/api/auth/telegram', async (req: Request, res: Response) => {
   let tgUser: { id: number; first_name: string; last_name?: string; username?: string } | null = null;
   let parsedReferral = (referralCode || req.body?.start_param || req.body?.startapp || '').toString().trim();
 
-  // Cryptographic Verification of Telegram initData
-  if (initData && typeof initData === 'string' && initData.trim().length > 0) {
-    if (TELEGRAM_BOT_TOKEN) {
-      const verifiedTg = verifyTelegramInitData(initData, TELEGRAM_BOT_TOKEN);
-      if (verifiedTg.valid && verifiedTg.user) {
-        tgUser = verifiedTg.user;
-      } else {
-        console.warn('[Telegram Auth Warning] Cryptographic verification failed, falling back to payload:', verifiedTg.error);
-        try {
-          const urlParams = new URLSearchParams(initData);
-          const userParam = urlParams.get('user');
-          if (userParam) tgUser = JSON.parse(userParam);
-        } catch {}
-      }
-      try {
-        const urlParams = new URLSearchParams(initData);
-        const startParam = urlParams.get('start_param') || urlParams.get('startapp') || urlParams.get('tgWebAppStartParam') || urlParams.get('start') || urlParams.get('ref');
-        if (startParam && !parsedReferral) parsedReferral = startParam.trim();
-      } catch {}
-    } else {
-      try {
-        const urlParams = new URLSearchParams(initData);
-        const userParam = urlParams.get('user');
-        if (userParam) tgUser = JSON.parse(userParam);
-        const startParam = urlParams.get('start_param') || urlParams.get('startapp') || urlParams.get('tgWebAppStartParam') || urlParams.get('start') || urlParams.get('ref');
-        if (startParam && !parsedReferral) parsedReferral = startParam.trim();
-      } catch {}
+  // Cryptographic verification of Telegram initData is MANDATORY.
+  // Without a valid signature there is no login: no demo user, no guest user, no "trust the payload".
+  const devLoginAllowed = !isProduction && !TELEGRAM_BOT_TOKEN; // local development only
+  if (initData && typeof initData === 'string' && initData.trim().length > 0 && TELEGRAM_BOT_TOKEN) {
+    const verifiedTg = verifyTelegramInitData(initData, TELEGRAM_BOT_TOKEN);
+    if (!verifiedTg.valid || !verifiedTg.user || !verifiedTg.user.id) {
+      console.warn('[Telegram Auth] Rejected login:', verifiedTg.error);
+      return res.status(401).json({ success: false, error: 'Telegram authentication failed. Please reopen the app from Telegram.' });
     }
-  }
-
-  if (!tgUser) {
-    if (demoUser && demoUser.id) {
-      tgUser = {
-        id: demoUser.id,
-        first_name: demoUser.first_name || 'E4F User',
-        last_name: demoUser.last_name || '',
-        username: demoUser.username || 'user',
-      };
-    } else if (storedUserId) {
-      const rawNum = parseInt(storedUserId.replace('usr_', '')) || 123456789;
-      tgUser = { id: rawNum, first_name: 'E4F User', username: 'user' };
-    } else {
-      // Graceful fallback for web/browser previews so Vercel logs never show 401 errors
-      const ipSeed = (req.headers['x-forwarded-for'] || req.socket.remoteAddress || 'guest').toString();
-      const guestTgId = 100000000 + Math.abs(parseInt(crypto.createHash('md5').update(ipSeed).digest('hex').slice(0, 7), 16) % 899999999);
-      tgUser = {
-        id: guestTgId,
-        first_name: 'E4F User',
-        last_name: '',
-        username: `user_${guestTgId.toString().slice(-4)}`,
-      };
+    tgUser = verifiedTg.user;
+    try {
+      const urlParams = new URLSearchParams(initData);
+      const startParam = urlParams.get('start_param') || urlParams.get('startapp') || urlParams.get('tgWebAppStartParam') || urlParams.get('start') || urlParams.get('ref');
+      if (startParam && !parsedReferral) parsedReferral = startParam.trim();
+    } catch {}
+  } else if (devLoginAllowed) {
+    try {
+      const urlParams = new URLSearchParams(String(initData || ''));
+      const userParam = urlParams.get('user');
+      if (userParam) tgUser = JSON.parse(userParam);
+    } catch {}
+    if (!tgUser && demoUser && demoUser.id) {
+      tgUser = { id: Number(demoUser.id), first_name: demoUser.first_name || 'E4F User', last_name: demoUser.last_name || '', username: demoUser.username || 'user' };
     }
+    if (!tgUser) tgUser = { id: 123456789, first_name: 'E4F Dev', username: 'dev_user' };
+  } else if (!TELEGRAM_BOT_TOKEN) {
+    console.error('[SECURITY] TELEGRAM_BOT_TOKEN is not configured on the server; logins are refused.');
+    return res.status(503).json({ success: false, error: 'Server is not configured yet. Please try again later.' });
+  } else {
+    return res.status(401).json({ success: false, error: 'Please open this app from Telegram to sign in.' });
   }
 
   // 1. AUTH LOGIC - telegram_id is IMMUTABLE PRIMARY KEY:
@@ -2144,7 +2145,7 @@ app.post('/api/auth/telegram', async (req: Request, res: Response) => {
 });
 
 // Explicit /api/balance Routes (Directly reading & writing from Supabase table 'balances')
-app.get('/api/balance/:userId', async (req: Request, res: Response) => {
+app.get('/api/balance/:userId', requireUserAuth, async (req: Request, res: Response) => {
   const { userId } = req.params;
   const userBalances = await getSupabaseBalance(userId);
   res.json({ success: true, balances: userBalances, serverTime: Date.now() });
@@ -2207,7 +2208,6 @@ app.get('/api/user/by-telegram/:telegramId', async (req: Request, res: Response)
           success: true,
           exists: true,
           referralCode: dbUser.referral_code,
-          user: dbUser,
         });
       }
 
@@ -2222,7 +2222,6 @@ app.get('/api/user/by-telegram/:telegramId', async (req: Request, res: Response)
           success: true,
           exists: true,
           referralCode: dbProfile.referral_code,
-          user: dbProfile,
         });
       }
 
@@ -2237,7 +2236,6 @@ app.get('/api/user/by-telegram/:telegramId', async (req: Request, res: Response)
           success: true,
           exists: true,
           referralCode: null,
-          wallet: dbWallet,
         });
       }
     } catch (err: any) {
@@ -2252,7 +2250,6 @@ app.get('/api/user/by-telegram/:telegramId', async (req: Request, res: Response)
       success: true,
       exists: true,
       referralCode: memUser.referralCode,
-      user: memUser,
     });
   }
 
@@ -2264,7 +2261,7 @@ app.get('/api/user/by-telegram/:telegramId', async (req: Request, res: Response)
 });
 
 // 2. User & Balances (/api/user/profile)
-app.get('/api/user/:userId/profile', async (req: Request, res: Response) => {
+app.get('/api/user/:userId/profile', requireUserAuth, async (req: Request, res: Response) => {
   const { userId } = req.params;
   const parsedTelegramId = parseInt(userId.replace(/\D/g, '')) || 123456789;
   const user = users.get(userId) || (await getUserFromSupabase(userId)) || (await getOrCreateUserAsync(parsedTelegramId, 'E4F User'));
@@ -2323,7 +2320,7 @@ app.get('/api/user/:userId/profile', async (req: Request, res: Response) => {
 });
 
 // Self-Account Deletion
-app.post('/api/user/:userId/delete', async (req: Request, res: Response) => {
+app.post('/api/user/:userId/delete', requireUserAuth, async (req: Request, res: Response) => {
   const { userId } = req.params;
   const { confirmText } = req.body;
 
@@ -2384,6 +2381,7 @@ app.get(['/api/system/public-settings', '/api/system/settings', '/system/public-
       const { data } = await supabase.from('system_settings').select('settings').eq('id', 'global_settings').maybeSingle();
       if (data && data.settings && typeof data.settings === 'object') {
         Object.assign(systemSettings, data.settings);
+        normalizeAdSlotSettings();
         const OLD_IDS = new Set(['54110', '54111', '410260', '54618', '54617', '54597', '2217']);
         delete (systemSettings as any).spin_01_adsgram;
         delete (systemSettings as any).spin_05_adexora;
@@ -2446,25 +2444,25 @@ app.get(['/api/system/public-settings', '/api/system/settings', '/system/public-
     monetagDirectLink: '',
     adsterraDirectLink: systemSettings.adsterraDirectLink || 'https://beta.publishers.adsterra.com/direct-link-demo',
     // Waterfall Ad IDs (5 Tiers: RichAds, Monetag, OnClickA)
-    spin_01_richads: systemSettings.spin_01_richads || '410203',
-    spin_02_monetag: systemSettings.spin_02_monetag || '12044377',
-    spin_03_onclicka: systemSettings.spin_03_onclicka || '6153717E4F',
-    spin_04_richads: systemSettings.spin_04_richads || '410203',
-    spin_05_monetag: systemSettings.spin_05_monetag || '12044377',
-    box_01_richads: systemSettings.box_01_richads || '410202',
-    box_02_monetag: systemSettings.box_02_monetag || '12044377',
-    box_03_onclicka: systemSettings.box_03_onclicka || '6153772E4F',
-    box_04_richads: systemSettings.box_04_richads || '410202',
-    box_05_monetag: systemSettings.box_05_monetag || '12044377',
+    spin_01_richads: resolveAdId('SPIN', 1),
+    spin_02_monetag: resolveAdId('SPIN', 2),
+    spin_03_onclicka: resolveAdId('SPIN', 3),
+    spin_04_richads: resolveAdId('SPIN', 4),
+    spin_05_monetag: resolveAdId('SPIN', 5),
+    box_01_richads: resolveAdId('GIFT_BOX', 1),
+    box_02_monetag: resolveAdId('GIFT_BOX', 2),
+    box_03_onclicka: resolveAdId('GIFT_BOX', 3),
+    box_04_richads: resolveAdId('GIFT_BOX', 4),
+    box_05_monetag: resolveAdId('GIFT_BOX', 5),
     // Mining Ad Gate & Waterfall (Configurable by Admin without app updates)
     miningPrimaryNetwork: systemSettings.miningPrimaryNetwork || 'RichAds',
     miningSecondaryNetwork: systemSettings.miningSecondaryNetwork || 'Monetag',
     miningWaterfallEnabled: systemSettings.miningWaterfallEnabled !== false,
-    mining_01_richads: systemSettings.mining_01_richads || '410204',
-    mining_02_monetag: systemSettings.mining_02_monetag || '12044377',
-    mining_03_onclicka: systemSettings.mining_03_onclicka || '6153774E4F',
-    mining_04_richads: systemSettings.mining_04_richads || '410204',
-    mining_05_monetag: systemSettings.mining_05_monetag || '12044377',
+    mining_01_richads: resolveAdId('MINING', 1),
+    mining_02_monetag: resolveAdId('MINING', 2),
+    mining_03_onclicka: resolveAdId('MINING', 3),
+    mining_04_richads: resolveAdId('MINING', 4),
+    mining_05_monetag: resolveAdId('MINING', 5),
   });
 });
 
@@ -2472,139 +2470,95 @@ app.get(['/api/system/public-settings', '/api/system/settings', '/system/public-
 app.get('/api/ad-config', (req: Request, res: Response) => {
   res.json({
     success: true,
-    mining_01_richads: systemSettings.mining_01_richads || '410204',
-    mining_02_monetag: systemSettings.mining_02_monetag || '12044377',
-    mining_03_onclicka: systemSettings.mining_03_onclicka || '6153774E4F',
-    mining_04_richads: systemSettings.mining_04_richads || '12823',
-    mining_05_monetag: systemSettings.mining_05_monetag || '12044377',
-    spin_01_richads: systemSettings.spin_01_richads || '410203',
-    spin_02_monetag: systemSettings.spin_02_monetag || '12044377',
-    spin_03_onclicka: systemSettings.spin_03_onclicka || '6153717E4F',
-    spin_04_richads: systemSettings.spin_04_richads || '12823',
-    spin_05_monetag: systemSettings.spin_05_monetag || '12044377',
-    box_01_richads: systemSettings.box_01_richads || '410202',
-    box_02_monetag: systemSettings.box_02_monetag || '12044377',
-    box_03_onclicka: systemSettings.box_03_onclicka || '6153772E4F',
-    box_04_richads: systemSettings.box_04_richads || '12823',
-    box_05_monetag: systemSettings.box_05_monetag || '12044377',
+    mining_01_richads: resolveAdId('MINING', 1),
+    mining_02_monetag: resolveAdId('MINING', 2),
+    mining_03_onclicka: resolveAdId('MINING', 3),
+    mining_04_richads: resolveAdId('MINING', 4),
+    mining_05_monetag: resolveAdId('MINING', 5),
+    spin_01_richads: resolveAdId('SPIN', 1),
+    spin_02_monetag: resolveAdId('SPIN', 2),
+    spin_03_onclicka: resolveAdId('SPIN', 3),
+    spin_04_richads: resolveAdId('SPIN', 4),
+    spin_05_monetag: resolveAdId('SPIN', 5),
+    box_01_richads: resolveAdId('GIFT_BOX', 1),
+    box_02_monetag: resolveAdId('GIFT_BOX', 2),
+    box_03_onclicka: resolveAdId('GIFT_BOX', 3),
+    box_04_richads: resolveAdId('GIFT_BOX', 4),
+    box_05_monetag: resolveAdId('GIFT_BOX', 5),
     miningAdDuration: Number(systemSettings.miningAdDurationSeconds || systemSettings.adMiningDurationSeconds || 30),
     spinAdDuration: Number(systemSettings.spinAdDurationSeconds || 30),
     giftBoxAdDuration: Number(systemSettings.giftBoxAdDurationSeconds || 30),
   });
 });
 
-// Account Verification with $2 USDT deposit
-app.post('/api/user/:userId/verify-account', async (req: Request, res: Response) => {
+// ---------------------------------------------------------------------------
+// Account Verification = "Trusted Miner" (Zero ID Card / No KYC Required)
+// A user who mines at least once on 120 consecutive UTC days is verified automatically on the 120th day.
+// The old deposit-based verification was removed completely.
+// ---------------------------------------------------------------------------
+const TRUSTED_MINER_DAYS = 120;
+
+async function computeMiningStreak(userId: string, now: number): Promise<number> {
+  const DAY = 86400000;
+  const days = new Set<number>();
+  for (const s of miningSessions) {
+    if (s.userId === userId) days.add(Math.floor(Number(s.startTime) / DAY));
+  }
+  if (supabase) {
+    try {
+      const { data } = await supabase
+        .from('mining_sessions')
+        .select('start_time')
+        .eq('user_id', userId)
+        .gte('start_time', now - (TRUSTED_MINER_DAYS + 5) * DAY);
+      (data || []).forEach((r: any) => days.add(Math.floor(Number(r.start_time) / DAY)));
+    } catch {}
+  }
+  const today = Math.floor(now / DAY);
+  // Count back from today (or from yesterday if the user has not mined yet today)
+  let d = days.has(today) ? today : today - 1;
+  let streak = 0;
+  while (days.has(d)) { streak++; d--; }
+  return streak;
+}
+
+async function evaluateTrustedMiner(userId: string, now: number): Promise<void> {
+  let u: UserRecord | null | undefined = users.get(userId);
+  if (!u && supabase) u = await getUserFromSupabase(userId);
+  if (!u || u.isVerified) return;
+  const streak = await computeMiningStreak(userId, now);
+  if (streak >= TRUSTED_MINER_DAYS) {
+    u.isVerified = true;
+    users.set(u.id, u);
+    await syncUserToSupabase(u);
+    scheduleSaveDatabase();
+  }
+}
+
+// Old deposit-based verification endpoint is removed
+app.post('/api/user/:userId/verify-account', (_req: Request, res: Response) => {
+  return res.status(410).json({
+    success: false,
+    error: 'Deposit verification has been removed. Mine every day for 120 days in a row to become a Trusted Miner.',
+  });
+});
+
+app.get('/api/user/:userId/trusted-miner', requireUserAuth, async (req: Request, res: Response) => {
   const { userId } = req.params;
-  const user = users.get(userId);
+  let user: UserRecord | null | undefined = users.get(userId);
+  if (!user && supabase) user = await getUserFromSupabase(userId);
   if (!user) return res.status(404).json({ success: false, error: 'User not found' });
-
-  // Ensure unique deposit address is set
-  if (!user.depositAddress) {
-    user.depositAddress = generateUserDepositAddress(user.id, user.uid);
-  }
-
-  // Admin switch: check if deposits are enabled
-  if (systemSettings.depositsEnabled === false) {
-    return res.status(403).json({
-      success: false,
-      error: 'Account verification deposits are currently turned off.'
-    });
-  }
-
-  if (user.isVerified) {
-    return res.json({
-      success: true,
-      alreadyVerified: true,
-      user,
-      message: 'Account is already verified!'
-    });
-  }
-
-  const officialAddress = systemSettings.bscDepositAddress || '0x63562945f7845aa1130a5b1499720b29788c82db';
-  const requiredUSDT = typeof systemSettings.depositMinUSDT === 'number' && systemSettings.depositMinUSDT >= 2.0
-    ? systemSettings.depositMinUSDT
-    : 2.0;
-  const returnBonusUSDT = typeof systemSettings.depositFirstBonusUSDT === 'number'
-    ? systemSettings.depositFirstBonusUSDT
-    : 10.0;
-  const currentDepositBal = Number(user.depositBalance || 0);
-
-  // Verification rule: MUST be deposited from an external wallet or exchange.
-  // E4F earnings, bonuses, or internal transfers CANNOT be used.
-  if (currentDepositBal < requiredUSDT) {
-    return res.status(400).json({
-      success: false,
-      insufficient: true,
-      requiredAmount: requiredUSDT,
-      currentDepositBalance: currentDepositBal,
-      userDepositAddress: user.depositAddress,
-      officialAddress,
-      message: `If You are Human please send ${requiredUSDT} usdt & instant back ${returnBonusUSDT} usdt.`,
-      error: `If You are Human please send ${requiredUSDT} usdt & instant back ${returnBonusUSDT} usdt. Insufficient Deposit balance ($${currentDepositBal.toFixed(2)} USDT available). Only external wallet/exchange deposit balance can be used.`
-    });
-  }
-
-  // Deduct requiredUSDT from Deposit Balance and send to official address
-  user.depositBalance = Math.max(0, Number((currentDepositBal - requiredUSDT).toFixed(4)));
-  user.isVerified = true;
-
-  // Instant back bonus returned to user Spot balance (saved to Supabase)!
-  const userBal = (await getSupabaseBalance(userId)) || { usdt: 0, e4f: 0, btc: 0, eth: 0, sol: 0, bnb: 0 };
-  userBal.usdt = Number(((userBal.usdt || 0) + returnBonusUSDT).toFixed(4));
-  await setSupabaseBalance(userId, userBal);
-
-  const txId = `tx_verify_${Date.now()}`;
-  transactions.unshift({
-    id: txId,
-    userId,
-    asset: 'USDT',
-    amount: requiredUSDT,
-    direction: 'OUT',
-    source: 'DEPOSIT',
-    status: 'COMPLETED',
-    timestamp: Date.now(),
-    note: `If You are Human: ${requiredUSDT} USDT sent to official address ${officialAddress} - Account Verified`,
-  });
-
-  const rewardTxId = `tx_verify_reward_${Date.now() + 1}`;
-  transactions.unshift({
-    id: rewardTxId,
-    userId,
-    asset: 'USDT',
-    amount: returnBonusUSDT,
-    direction: 'IN',
-    source: 'DEPOSIT',
-    status: 'COMPLETED',
-    timestamp: Date.now() + 1,
-    note: `If You are Human: Instant back ${returnBonusUSDT} USDT bonus credited (+${returnBonusUSDT.toFixed(2)} USDT Spot)`,
-  });
-
-  auditLogs.unshift({
-    id: `audit_${Date.now()}`,
-    adminId: 'SYSTEM_VERIFY',
-    action: 'USER_VERIFIED_DEPOSIT',
-    target: userId,
-    details: `User UID ${user.uid} verified account with ${requiredUSDT} USDT sent to official address ${officialAddress}. Instant ${returnBonusUSDT} USDT returned.`,
-    timestamp: Date.now(),
-  });
-
-  persistDatabaseSync();
-
+  const streak = await computeMiningStreak(userId, Date.now());
   return res.json({
     success: true,
-    message: 'send success',
-    user,
-    balances: userBal,
-    depositBalance: user.depositBalance,
-    isVerified: true,
-    bonusReturned: returnBonusUSDT,
-    officialAddress,
+    streakDays: Math.min(streak, TRUSTED_MINER_DAYS),
+    requiredDays: TRUSTED_MINER_DAYS,
+    isVerified: Boolean(user.isVerified),
   });
 });
 
 // 3. Mining API (/api/mining)
-app.get('/api/mining/:userId/status', async (req: Request, res: Response) => {
+app.get('/api/mining/:userId/status', requireUserAuth, async (req: Request, res: Response) => {
   const { userId } = req.params;
   const now = Date.now();
 
@@ -2661,13 +2615,8 @@ app.get('/api/mining/:userId/status', async (req: Request, res: Response) => {
   const seasonEnd = new Date('2028-02-28T00:00:00Z').getTime();
   const daysRemaining = Math.max(0, Math.ceil((seasonEnd - now) / (1000 * 60 * 60 * 24)));
 
-  // Active unconsumed ad verification session check
-  const activeAdSession = Array.from(miningAdSessions.values()).find(
-    s => s.userId === userId && !s.consumed && (now - s.startedAt) < 15 * 60 * 1000
-  );
-
   // Referral mining boost calculation
-  const referralCount = 12; // Base user referral network
+  const referralCount = Number((systemSettings as any).baseReferralBoostCount ?? 12); // Base user referral network (admin-configurable)
   const boostPercent = calculateMiningBoost(referralCount);
   const baseRate = systemSettings.miningRatePerHour;
   const boostedRate = Number((baseRate * (1 + boostPercent / 100)).toFixed(4));
@@ -2675,20 +2624,7 @@ app.get('/api/mining/:userId/status', async (req: Request, res: Response) => {
   res.json({
     serverTime: now,
     activeSession: activeSession || null,
-    activeAdSession: activeAdSession
-      ? {
-          sessionId: activeAdSession.sessionId,
-          token: activeAdSession.token,
-          startedAt: activeAdSession.startedAt,
-          endsAt: activeAdSession.endsAt,
-          durationSeconds: activeAdSession.durationSeconds,
-          remainingSeconds: Math.max(0, Math.ceil((activeAdSession.endsAt - now) / 1000)),
-          canVerify: (now - activeAdSession.startedAt) >= 60000,
-          verified: activeAdSession.verified,
-          serverTime: now,
-          adDirectLink: systemSettings.adProvider === 'MONETAG' ? systemSettings.monetagDirectLink : (systemSettings.adsterraDirectLink || systemSettings.monetagDirectLink),
-        }
-      : null,
+    activeAdSession: null,
     todayMiningE4F: todayMinedE4F,
     totalMiningE4F: totalMinedE4F,
     totalSessionsCompleted: completedSessions.length,
@@ -2705,11 +2641,11 @@ app.get('/api/mining/:userId/status', async (req: Request, res: Response) => {
     miningPrimaryNetwork: systemSettings.miningPrimaryNetwork || 'RichAds',
     miningSecondaryNetwork: systemSettings.miningSecondaryNetwork || 'Monetag',
     miningWaterfallEnabled: systemSettings.miningWaterfallEnabled !== false,
-    mining_01_richads: systemSettings.mining_01_richads || '410204',
-    mining_02_monetag: systemSettings.mining_02_monetag || '12044377',
-    mining_03_onclicka: systemSettings.mining_03_onclicka || '6153774E4F',
-    mining_04_richads: systemSettings.mining_04_richads || '410204',
-    mining_05_monetag: systemSettings.mining_05_monetag || '12044377',
+    mining_01_richads: resolveAdId('MINING', 1),
+    mining_02_monetag: resolveAdId('MINING', 2),
+    mining_03_onclicka: resolveAdId('MINING', 3),
+    mining_04_richads: resolveAdId('MINING', 4),
+    mining_05_monetag: resolveAdId('MINING', 5),
     adsterraDirectLink: systemSettings.adsterraDirectLink,
     monetagDirectLink: systemSettings.monetagDirectLink,
     seasonEndDate: seasonEnd,
@@ -2718,749 +2654,524 @@ app.get('/api/mining/:userId/status', async (req: Request, res: Response) => {
   });
 });
 
-// Universal Ad Session Creation for Mining, Spins, and Gift Boxes
-app.post('/api/ads/session/create', async (req: Request, res: Response) => {
-  const { userId, actionType, targetId } = req.body;
-  if (!userId || !actionType) {
-    return res.status(400).json({ success: false, error: 'User ID and actionType are required' });
-  }
+// =========================================================================
+// SECURE AD ENGINE
+// - Ad sessions are STATELESS signed tokens (HMAC). They work on every serverless instance.
+// - A reward token ("claimToken") is signed, short lived and can be redeemed exactly ONCE
+//   (durable one-time redemption in Supabase table e4f_ad_redeemed).
+// - Daily limits (5 spins / 5 gift boxes) live in Supabase table e4f_daily_claims, not in memory.
+// - The server decides which network/slot belongs to a spin or box. The client cannot choose.
+// - There is NO client-side or "clm_" fallback anywhere. No ad = no reward.
+// =========================================================================
+type AdAction = 'MINING' | 'SPIN' | 'GIFT_BOX';
+type AdNetwork = 'RichAds' | 'Monetag' | 'OnClickA';
 
-  const validActions = ['MINING', 'SPIN', 'GIFT_BOX', 'WITHDRAW', 'SELL'];
-  if (!validActions.includes(actionType)) {
-    return res.status(400).json({ success: false, error: 'Invalid actionType. Must be MINING, SPIN, GIFT_BOX, WITHDRAW, or SELL' });
-  }
+interface AdTier {
+  index: number;
+  provider: AdNetwork;
+  id: string;
+  label: string;
+}
 
-  const user = await getUserFromSupabase(userId);
-  if (!user) {
-    return res.status(404).json({ success: false, error: 'User not found' });
-  }
+// Fixed network per slot (matches the approved "FINAL AD LOGIC" design)
+const AD_SLOT_NETWORKS: Record<AdAction, AdNetwork[]> = {
+  MINING: ['RichAds', 'Monetag', 'OnClickA', 'RichAds', 'Monetag'],
+  SPIN: ['RichAds', 'Monetag', 'OnClickA', 'Monetag', 'Monetag'],
+  GIFT_BOX: ['RichAds', 'Monetag', 'OnClickA', 'Monetag', 'Monetag'],
+};
+const AD_SLOT_DEFAULT_IDS: Record<AdAction, string[]> = {
+  MINING: ['410204', '12044377', '6153774E4F', '410204', '12044377'],
+  SPIN: ['410203', '12044377', '6153717E4F', '12044377', '12044377'],
+  GIFT_BOX: ['410202', '12044377', '6153772E4F', '12044377', '12044377'],
+};
+const AD_SETTING_PREFIX: Record<AdAction, string> = { MINING: 'mining', SPIN: 'spin', GIFT_BOX: 'box' };
+const AD_SETTING_SUFFIX = ['richads', 'monetag', 'onclicka', 'richads', 'monetag'];
+const AD_ID_PATTERN: Record<AdNetwork, RegExp> = {
+  RichAds: /^\d{6}$/,
+  Monetag: /^\d{7,9}$/,
+  OnClickA: /^\d{5,10}E4F$/i,
+};
 
-  const now = Date.now();
+function adSettingKey(action: AdAction, slot: number): string {
+  return `${AD_SETTING_PREFIX[action]}_0${slot}_${AD_SETTING_SUFFIX[slot - 1]}`;
+}
 
-  // Action-specific validations
-  if (actionType === 'MINING') {
-    const existingActive = miningSessions.find(s => s.userId === userId && s.status === 'ACTIVE' && now < s.endTime);
-    if (existingActive) {
-      return res.status(400).json({ success: false, error: 'A mining session is already active' });
+/** Resolve the ad id for a slot. Admin may change the id, but never the network type of the slot. */
+function resolveAdId(action: AdAction, slot: number): string {
+  const network = AD_SLOT_NETWORKS[action][slot - 1];
+  const raw = String((systemSettings as any)[adSettingKey(action, slot)] ?? '').trim();
+  if (raw && AD_ID_PATTERN[network].test(raw)) return raw;
+  return AD_SLOT_DEFAULT_IDS[action][slot - 1];
+}
+
+/** Write the resolved (valid) ids back into settings so every endpoint/admin panel shows the same values. */
+function normalizeAdSlotSettings(): void {
+  (['MINING', 'SPIN', 'GIFT_BOX'] as AdAction[]).forEach((action) => {
+    for (let slot = 1; slot <= 5; slot++) {
+      (systemSettings as any)[adSettingKey(action, slot)] = resolveAdId(action, slot);
     }
-  } else if (actionType === 'SPIN') {
-    const todayStr = new Date().toISOString().split('T')[0];
-    const spinData = userDailySpins.get(userId);
-    const spinsUsed = (spinData && spinData.date === todayStr) ? spinData.count : 0;
-    const maxSpins = systemSettings.rewardSpinMaxDaily || 5;
-    if (spinsUsed >= maxSpins) {
-      return res.status(400).json({ success: false, error: `Daily spin limit of ${maxSpins} reached. Resets at 00:00 UTC.` });
-    }
-  } else if (actionType === 'GIFT_BOX') {
-    const todayStr = new Date().toISOString().split('T')[0];
-    const dailyOpen = userDailyGiftBoxOpens.get(userId);
-    const maxBoxes = systemSettings.giftBoxMaxDaily || 5;
-    if (dailyOpen && dailyOpen.date === todayStr && dailyOpen.count >= maxBoxes) {
-      return res.status(400).json({ success: false, error: `Daily gift box limit of ${maxBoxes} reached. Resets at 00:00 UTC.` });
-    }
-    if (targetId && dailyOpen && dailyOpen.date === todayStr && dailyOpen.openedBoxIds.includes(Number(targetId))) {
-      return res.status(400).json({ success: false, error: `Gift Box #${targetId} already opened today.` });
-    }
-  }
-
-  const sessionId = `ad_${now}_${Math.random().toString(36).substring(2, 9)}`;
-  const token = crypto.randomBytes(24).toString('hex');
-  const miningSec = systemSettings.miningAdDurationSeconds || systemSettings.adMiningDurationSeconds || 30;
-  const spinSec = systemSettings.spinAdDurationSeconds || 30;
-  const giftBoxSec = systemSettings.giftBoxAdDurationSeconds || 30;
-  const sessionDuration = actionType === 'MINING' ? miningSec : actionType === 'SPIN' ? spinSec : giftBoxSec;
-
-  const session: MiningAdSessionRecord = {
-    sessionId,
-    userId,
-    actionType,
-    targetId: targetId ? Number(targetId) : undefined,
-    startedAt: 0, // Will be set when user actually starts watching the real ad
-    endsAt: now + 15 * 60 * 1000,
-    durationSeconds: sessionDuration,
-    verified: false,
-    consumed: false,
-    token,
-    createdAt: now,
-    adOpenedAt: 0,
-    watchStarted: false,
-  };
-
-  miningAdSessions.set(sessionId, session);
-  adSessions.set(sessionId, {
-    userId,
-    createdAt: now,
-    verified: false,
-    token,
   });
-  scheduleSaveDatabase();
+}
+normalizeAdSlotSettings();
 
-  // Record ad view in Supabase e4f_ad_views
+function getAdTiers(action: AdAction, slot?: number): AdTier[] {
+  const build = (s: number): AdTier => {
+    const provider = AD_SLOT_NETWORKS[action][s - 1];
+    const label = action === 'MINING'
+      ? `${provider} (Tier ${s})`
+      : `${provider} (${action === 'SPIN' ? 'Spin' : 'Box'} ${s})`;
+    return { index: action === 'MINING' ? s : 1, provider, id: resolveAdId(action, s), label };
+  };
+  if (action === 'MINING') return [1, 2, 3, 4, 5].map(build);
+  const s = Math.max(1, Math.min(5, Number(slot) || 1));
+  return [build(s)];
+}
+
+// ---- signed payloads -----------------------------------------------------
+const AD_SESSION_TTL_MS = 15 * 60 * 1000;
+const AD_CLAIM_TTL_MS = 10 * 60 * 1000;
+
+function b64url(buf: Buffer | string): string {
+  return Buffer.from(buf).toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '');
+}
+function fromB64url(s: string): Buffer {
+  const pad = s.length % 4 === 0 ? '' : '='.repeat(4 - (s.length % 4));
+  return Buffer.from(s.replace(/-/g, '+').replace(/_/g, '/') + pad, 'base64');
+}
+function adSign(kind: 'session' | 'watch' | 'claim' | 'timer', payload: Record<string, any>): string {
+  const body = b64url(JSON.stringify(payload));
+  const sig = crypto.createHmac('sha256', SESSION_SECRET_KEY).update(`e4f-ad|${kind}|${body}`).digest('hex');
+  return `${body}.${sig}`;
+}
+function adVerify(kind: 'session' | 'watch' | 'claim' | 'timer', token: any): Record<string, any> | null {
+  if (typeof token !== 'string' || token.length > 2000) return null;
+  const dot = token.indexOf('.');
+  if (dot < 1) return null;
+  const body = token.slice(0, dot);
+  const sig = token.slice(dot + 1);
+  const expected = crypto.createHmac('sha256', SESSION_SECRET_KEY).update(`e4f-ad|${kind}|${body}`).digest('hex');
+  const a = Buffer.from(sig, 'utf-8');
+  const b = Buffer.from(expected, 'utf-8');
+  if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) return null;
+  try {
+    const obj = JSON.parse(fromB64url(body).toString('utf-8'));
+    return obj && typeof obj === 'object' ? obj : null;
+  } catch {
+    return null;
+  }
+}
+
+// ---- durable storage (Supabase) with a dev-only in-memory fallback ---------
+const memDailyClaims = new Map<string, Set<number>>();
+const memRedeemed = new Set<string>();
+const memPostbacks = new Set<string>();
+const todayUTC = (): string => new Date().toISOString().slice(0, 10);
+
+class AdStoreError extends Error {}
+
+async function getDailySlots(userId: string, type: 'SPIN' | 'GIFT_BOX'): Promise<number[]> {
+  const day = todayUTC();
+  if (supabase) {
+    const { data, error } = await supabase
+      .from('e4f_daily_claims')
+      .select('slot')
+      .eq('user_id', userId)
+      .eq('day', day)
+      .eq('type', type);
+    if (error) throw new AdStoreError(error.message);
+    return (data || []).map((r: any) => Number(r.slot));
+  }
+  if (isProduction) throw new AdStoreError('Database is not configured');
+  return Array.from(memDailyClaims.get(`${userId}|${day}|${type}`) || []);
+}
+
+/** Returns true when the slot was claimed now, false when it was already claimed (race / replay). */
+async function claimDailySlot(userId: string, type: 'SPIN' | 'GIFT_BOX', slot: number): Promise<boolean> {
+  const day = todayUTC();
+  if (supabase) {
+    const { error } = await supabase.from('e4f_daily_claims').insert({ user_id: userId, day, type, slot });
+    if (!error) return true;
+    if ((error as any).code === '23505') return false;
+    throw new AdStoreError(error.message);
+  }
+  if (isProduction) throw new AdStoreError('Database is not configured');
+  const k = `${userId}|${day}|${type}`;
+  const set = memDailyClaims.get(k) || new Set<number>();
+  if (set.has(slot)) return false;
+  set.add(slot);
+  memDailyClaims.set(k, set);
+  return true;
+}
+
+async function redeemSessionOnce(sid: string, userId: string, action: AdAction, slot: number): Promise<boolean> {
+  if (supabase) {
+    const { error } = await supabase
+      .from('e4f_ad_redeemed')
+      .insert({ session_id: sid, user_id: userId, action, slot, redeemed_at: new Date().toISOString() });
+    if (!error) return true;
+    if ((error as any).code === '23505') return false;
+    throw new AdStoreError(error.message);
+  }
+  if (isProduction) throw new AdStoreError('Database is not configured');
+  if (memRedeemed.has(sid)) return false;
+  memRedeemed.add(sid);
+  return true;
+}
+
+async function hasMonetagPostback(sid: string): Promise<boolean> {
+  if (supabase) {
+    const { data, error } = await supabase.from('e4f_ad_postbacks').select('ymid').eq('ymid', sid).maybeSingle();
+    if (error) throw new AdStoreError(error.message);
+    return Boolean(data);
+  }
+  return memPostbacks.has(sid);
+}
+
+function adStoreFail(res: Response, err: any) {
+  console.error('[AdEngine] store error:', err?.message || err);
+  return res.status(503).json({
+    success: false,
+    error: 'Rewards are temporarily unavailable. Please try again in a moment.',
+  });
+}
+
+// ---- tiny per-instance rate limiter (extra protection, not the only one) ----
+const adRateBuckets = new Map<string, { n: number; t: number }>();
+function adRateLimited(key: string, max: number, windowMs: number): boolean {
+  const now = Date.now();
+  const b = adRateBuckets.get(key);
+  if (!b || now - b.t > windowMs) {
+    adRateBuckets.set(key, { n: 1, t: now });
+    if (adRateBuckets.size > 5000) {
+      for (const [k, v] of adRateBuckets) if (now - v.t > windowMs) adRateBuckets.delete(k);
+    }
+    return false;
+  }
+  b.n += 1;
+  return b.n > max;
+}
+
+function firstUnusedSlot(used: number[], max: number): number {
+  for (let s = 1; s <= max; s++) if (!used.includes(s)) return s;
+  return 0;
+}
+const spinMaxDaily = (): number => Math.max(1, Math.min(5, Number(systemSettings.rewardSpinMaxDaily) || 5));
+const boxMaxDaily = (): number => Math.max(1, Math.min(5, Number(systemSettings.giftBoxMaxDaily) || 5));
+
+/** Is there a mining session still running for this user? (memory first, then database) */
+async function userHasActiveMining(userId: string, now: number): Promise<boolean> {
+  if (miningSessions.some(s => s.userId === userId && s.status === 'ACTIVE' && now < s.endTime)) return true;
   if (supabase) {
     try {
-      const placement = actionType + (targetId ? `_${targetId}` : '');
-      Promise.resolve(supabase.from('e4f_ad_views').insert({
-        user_id: userId,
-        network: systemSettings.adProvider || 'RichAds',
-        placement,
-        created_at: new Date().toISOString(),
-      })).catch(() => {});
+      const { data } = await supabase
+        .from('mining_sessions')
+        .select('id')
+        .eq('user_id', userId)
+        .eq('status', 'ACTIVE')
+        .gt('end_time', now)
+        .limit(1);
+      if (data && data.length > 0) return true;
     } catch {}
   }
+  return false;
+}
 
-  res.json({
-    success: true,
-    sessionId: session.sessionId,
-    token: session.token,
-    actionType: session.actionType,
-    targetId: session.targetId,
-    durationSeconds: sessionDuration,
-    zoneId: systemSettings.monetagZoneId || '12044377',
-    directLink: '',
-    provider: systemSettings.adProvider,
-    serverTime: now,
+type RedeemResult = { ok: boolean; slot?: number; status?: number; error?: string };
+
+/**
+ * Validates a reward token and burns it. Called by mining start, spin and gift box.
+ * The token must be: correctly signed, not expired, issued to THIS user, for THIS action and slot,
+ * and never redeemed before.
+ */
+async function redeemAdClaim(
+  userId: string,
+  adSessionId: any,
+  claimToken: any,
+  action: AdAction,
+  expectedSlot: number
+): Promise<RedeemResult> {
+  const c = adVerify('claim', claimToken);
+  if (!c || typeof adSessionId !== 'string' || c.sid !== adSessionId || c.uid !== userId || c.act !== action) {
+    return { ok: false, status: 403, error: 'Rewarded ad verification failed. Please watch the ad again.' };
+  }
+  if (Date.now() > Number(c.exp)) {
+    return { ok: false, status: 403, error: 'The ad reward expired. Please watch the ad again.' };
+  }
+  if (Number(c.slot) !== expectedSlot) {
+    return { ok: false, status: 403, error: 'This ad was issued for a different slot.' };
+  }
+  const fresh = await redeemSessionOnce(String(c.sid), userId, action, expectedSlot);
+  if (!fresh) {
+    return { ok: false, status: 403, error: 'This ad reward has already been used. Please watch a new ad.' };
+  }
+  return { ok: true, slot: expectedSlot };
+}
+
+// Public ad config: always the validated slot ids (never stale/invalid values)
+function publicAdConfig() {
+  const cfg: Record<string, any> = {};
+  (['MINING', 'SPIN', 'GIFT_BOX'] as AdAction[]).forEach((action) => {
+    for (let slot = 1; slot <= 5; slot++) cfg[adSettingKey(action, slot)] = resolveAdId(action, slot);
   });
+  return cfg;
+}
+
+// ---------------------------------------------------------------------------
+// 1) Create an ad session (server decides slot + network)
+// ---------------------------------------------------------------------------
+// Admin ban/suspension is enforced on reward + money routes (30s cache, DB is the source of truth)
+const suspendCache = new Map<string, { v: boolean; t: number }>();
+async function isUserSuspended(userId: string): Promise<boolean> {
+  const c = suspendCache.get(userId);
+  if (c && Date.now() - c.t < 30000) return c.v;
+  let v = false;
+  try {
+    if (supabase) {
+      const { data } = await supabase.from('users').select('status').eq('id', userId).maybeSingle();
+      v = data?.status === 'SUSPENDED';
+    }
+    const mem = users.get(userId);
+    if (mem && mem.status === 'SUSPENDED') v = true;
+  } catch {}
+  suspendCache.set(userId, { v, t: Date.now() });
+  return v;
+}
+
+app.post('/api/ads/session/create', requireUserAuth, async (req: Request, res: Response) => {
+  const userId = String((req as any).verifiedUserId || '');
+  const actionType = String(req.body?.actionType || '').toUpperCase() as AdAction;
+  if (!userId) return res.status(401).json({ success: false, error: 'Authentication required' });
+  if (await isUserSuspended(userId)) return res.status(403).json({ success: false, error: 'Your account is suspended.' });
+  if (!['MINING', 'SPIN', 'GIFT_BOX'].includes(actionType)) {
+    return res.status(400).json({ success: false, error: 'Invalid actionType. Must be MINING, SPIN or GIFT_BOX' });
+  }
+  if (adRateLimited(`create|${userId}`, 20, 60_000)) {
+    return res.status(429).json({ success: false, error: 'Too many requests. Please wait a moment.' });
+  }
+
+  try {
+    const now = Date.now();
+    let slot = 0;
+
+    if (actionType === 'MINING') {
+      if (await userHasActiveMining(userId, now)) {
+        return res.status(400).json({ success: false, error: 'A mining session is already active' });
+      }
+    } else if (actionType === 'SPIN') {
+      const max = spinMaxDaily();
+      const used = await getDailySlots(userId, 'SPIN');
+      slot = firstUnusedSlot(used, max);
+      if (!slot) {
+        return res.status(400).json({ success: false, error: `Daily spin limit of ${max} reached. Resets at 00:00 UTC.` });
+      }
+    } else {
+      const max = boxMaxDaily();
+      const boxNum = Number(req.body?.targetId);
+      if (!Number.isInteger(boxNum) || boxNum < 1 || boxNum > max) {
+        return res.status(400).json({ success: false, error: 'Invalid gift box number' });
+      }
+      const used = await getDailySlots(userId, 'GIFT_BOX');
+      if (used.length >= max) {
+        return res.status(400).json({ success: false, error: `Daily gift box limit of ${max} reached. Resets at 00:00 UTC.` });
+      }
+      if (used.includes(boxNum)) {
+        return res.status(400).json({ success: false, error: `Gift Box #${boxNum} already opened today.` });
+      }
+      slot = boxNum;
+    }
+
+    const sid = `ad_${crypto.randomBytes(12).toString('hex')}`;
+    const token = adSign('session', { sid, uid: userId, act: actionType, slot, iat: now, exp: now + AD_SESSION_TTL_MS });
+    const tiers = getAdTiers(actionType, slot);
+    const durationSeconds = Number(
+      actionType === 'MINING'
+        ? (systemSettings.miningAdDurationSeconds || systemSettings.adMiningDurationSeconds || 30)
+        : actionType === 'SPIN'
+        ? (systemSettings.spinAdDurationSeconds || 30)
+        : (systemSettings.giftBoxAdDurationSeconds || 30)
+    ) || 30;
+
+    if (supabase) {
+      Promise.resolve(
+        supabase.from('e4f_ad_views').insert({
+          user_id: userId,
+          network: tiers[0].provider,
+          placement: actionType + (slot ? `_${slot}` : ''),
+          created_at: new Date().toISOString(),
+        })
+      ).catch(() => {});
+    }
+
+    return res.json({
+      success: true,
+      sessionId: sid,
+      token,
+      actionType,
+      targetId: slot || undefined,
+      durationSeconds,
+      tiers,
+      zoneId: tiers[0].id,
+      provider: tiers[0].provider,
+      directLink: '',
+      serverTime: now,
+    });
+  } catch (err: any) {
+    return adStoreFail(res, err);
+  }
 });
 
-// Endpoint: Notify server that user actually opened and started watching the ad
-app.post('/api/ads/session/start-watching', (req: Request, res: Response) => {
-  const { sessionId, token, userId } = req.body;
-  const session = miningAdSessions.get(sessionId);
-
-  if (!session || session.token !== token) {
-    return res.status(400).json({ success: false, error: 'Invalid or expired ad session' });
+function readAdSession(req: Request): { ok: boolean; p?: Record<string, any>; userId?: string; status?: number; error?: string } {
+  const userId = String((req as any).verifiedUserId || '');
+  const p = adVerify('session', req.body?.token);
+  if (!p || p.sid !== req.body?.sessionId || p.uid !== userId) {
+    return { ok: false, status: 400, error: 'Invalid or expired ad session' };
   }
-
-  if (userId && session.userId !== userId) {
-    return res.status(403).json({ success: false, error: 'User mismatch' });
+  if (Date.now() > Number(p.exp)) {
+    return { ok: false, status: 400, error: 'Ad session expired. Please start a new one.' };
   }
+  return { ok: true, p, userId };
+}
 
+// ---------------------------------------------------------------------------
+// 2) The user pressed "Watch Ad": server starts its own clock and returns a signed watch ticket
+// ---------------------------------------------------------------------------
+app.post('/api/ads/session/start-watching', requireUserAuth, (req: Request, res: Response) => {
+  const r = readAdSession(req);
+  if (!r.ok) return res.status(r.status || 400).json({ success: false, error: r.error || 'Invalid ad session' });
   const now = Date.now();
-  // Set startedAt when ad watching actually commences
-  if (!session.watchStarted || !session.startedAt || session.startedAt === 0) {
-    session.startedAt = now;
-  }
-  session.adOpenedAt = now;
-  session.watchStarted = true;
-  scheduleSaveDatabase();
-
-  res.json({
-    success: true,
-    startedAt: session.startedAt,
-    serverTime: now,
-  });
+  const watchTicket = adSign('watch', { sid: r.p!.sid, uid: r.userId, st: now });
+  return res.json({ success: true, startedAt: now, watchTicket, serverTime: now });
 });
 
-// Endpoint: Cancel ad session (user closed early or pressed back button)
-app.post('/api/ads/session/cancel', (req: Request, res: Response) => {
-  const { sessionId, token } = req.body;
-  const session = miningAdSessions.get(sessionId);
-
-  if (session && session.token === token) {
-    session.consumed = true;
-    miningAdSessions.delete(sessionId);
-    adSessions.delete(sessionId);
-    scheduleSaveDatabase();
-  }
-
+app.post('/api/ads/session/cancel', requireUserAuth, (_req: Request, res: Response) => {
+  // Sessions are stateless; nothing to clean up. A cancelled session simply is never completed.
   res.json({ success: true, message: 'Session cancelled' });
 });
 
-// Monetag Official Server-to-Server (S2S) Postback
-// URL: /api/monetag/postback?ymid={ymid}&zone_id={zone_id}&sub_zone_id={sub_zone_id}&request_var={request_var}
-app.get('/api/monetag/postback', (req: Request, res: Response) => {
-  const { ymid, zone_id, sub_zone_id, request_var } = req.query;
-  const sessionId = String(ymid || '');
-
-  if (!sessionId) {
-    return res.status(400).send('Missing ymid parameter');
+// Monetag server-to-server postback (optional hard proof that the ad really played).
+// In Monetag dashboard set: https://YOUR-DOMAIN/api/monetag/postback?ymid={ymid}&zone_id={zone_id}&secret=YOUR_MONETAG_POSTBACK_SECRET
+app.get('/api/monetag/postback', async (req: Request, res: Response) => {
+  const sid = String(req.query.ymid || '');
+  const required = process.env.MONETAG_POSTBACK_SECRET || '';
+  if (required && String(req.query.secret || '') !== required) {
+    return res.status(403).send('Forbidden');
   }
-
-  const session = miningAdSessions.get(sessionId);
-  if (!session) {
-    console.warn(`[Monetag Postback] Received ping for unknown session: ${sessionId}`);
-    return res.status(200).send('OK');
-  }
-
-  const now = Date.now();
-  if (!session.consumed) {
-    session.monetagS2SConfirmed = true;
-    session.verified = true;
-    session.verifiedAt = now;
-    session.claimToken = session.claimToken || crypto.randomBytes(24).toString('hex');
-
-    const legacy = adSessions.get(sessionId);
-    if (legacy) legacy.verified = true;
-
-    scheduleSaveDatabase();
-    console.log(`[Monetag Postback] Session verified successfully: ${sessionId}, action: ${session.actionType}`);
-  }
-
-  res.status(200).send('OK');
-});
-
-// Authoritative Backend Verification for Completed Monetag SDK Ad Session
-app.post('/api/ads/session/complete', (req: Request, res: Response) => {
-  const { sessionId, token, userId, actionType, targetId, sdkSignal } = req.body;
-  let session = sessionId ? miningAdSessions.get(sessionId) : undefined;
-  if (!session && userId) {
-    session = Array.from(miningAdSessions.values()).reverse().find(s => s.userId === userId && !s.consumed);
-  }
-  if (!session) {
-    const now = Date.now();
-    const newSession: MiningAdSessionRecord = {
-      sessionId: String(sessionId || `session_${now}`),
-      token: String(token || `token_${now}`),
-      userId: String(userId || 'anonymous'),
-      actionType: actionType || 'MINING',
-      targetId: targetId ? Number(targetId) : undefined,
-      startedAt: now - 30000,
-      createdAt: now - 30000,
-      endsAt: now,
-      watchStarted: true,
-      durationSeconds: 30,
-      consumed: false,
-      verified: false,
-    };
-    miningAdSessions.set(newSession.sessionId, newSession);
-    session = newSession;
-  }
-
-  if (actionType && session.actionType && session.actionType !== actionType) {
-    return res.status(403).json({ success: false, error: 'Ad session action type mismatch' });
-  }
-
-  if (session.consumed) {
-    return res.status(400).json({ success: false, error: 'Ad session has already been used' });
-  }
-
-  const now = Date.now();
-
-  // Must have actually opened and started watching the ad
-  if (!session.watchStarted || !session.startedAt || session.startedAt === 0) {
-    if (session.createdAt && (now - session.createdAt) >= 3000) {
-      session.watchStarted = true;
-      session.startedAt = session.createdAt;
+  if (!/^ad_[0-9a-f]{24}$/.test(sid)) return res.status(200).send('OK');
+  try {
+    if (supabase) {
+      await supabase.from('e4f_ad_postbacks').upsert({
+        ymid: sid,
+        zone_id: String(req.query.zone_id || ''),
+        created_at: new Date().toISOString(),
+      });
     } else {
-      return res.status(400).json({
-        success: false,
-        error: 'You must open and watch the real ad before claiming reward.',
-        canVerify: false,
-      });
+      memPostbacks.add(sid);
     }
+  } catch (e) {
+    console.warn('[Monetag Postback] store failed', e);
   }
-  if (now - session.startedAt > 15 * 60 * 1000) {
-    return res.status(400).json({ success: false, error: 'Ad verification session has expired. Please start a new one.' });
+  return res.status(200).send('OK');
+});
+
+// ---------------------------------------------------------------------------
+// 3) The ad network reported "finished": server checks its OWN clock and issues the reward token
+// ---------------------------------------------------------------------------
+app.post('/api/ads/session/complete', requireUserAuth, async (req: Request, res: Response) => {
+  const r = readAdSession(req);
+  if (!r.ok) return res.status(r.status || 400).json({ success: false, error: r.error || 'Invalid ad session' });
+  const p = r.p as Record<string, any>;
+  const userId = r.userId as string;
+  const action = p.act as AdAction;
+  const slot = Number(p.slot) || 0;
+
+  const ticket = adVerify('watch', req.body?.watchTicket);
+  if (!ticket || ticket.sid !== p.sid || ticket.uid !== userId || Number(ticket.st) < Number(p.iat) - 1000) {
+    return res.status(400).json({ success: false, error: 'You must open and watch the real ad before claiming reward.', canVerify: false });
   }
 
-  // Strict Elapsed Time Verification:
-  const elapsedMs = now - session.startedAt;
-  const isMining = session.actionType === 'MINING';
-  const isSpin = session.actionType === 'SPIN';
-  const requiredSeconds = session.durationSeconds || (
-    isMining
-      ? (systemSettings.miningAdDurationSeconds || systemSettings.adMiningDurationSeconds || 30)
-      : isSpin
-      ? (systemSettings.spinAdDurationSeconds || 30)
-      : (systemSettings.giftBoxAdDurationSeconds || 30)
-  );
-  // Strictly enforce required duration (allow at most 1s clock drift tolerance)
-  // NOTE: when the ad network SDK itself confirmed the ad was shown to the end (signal ends with _SDK_COMPLETED),
-  // the real ad length decides (ads are often shorter than the configured seconds), so only a small minimum applies.
-  const isNetworkSdkCompleted = typeof sdkSignal === 'string' && /_SDK_COMPLETED$/.test(sdkSignal);
-  const minRequiredMs = isNetworkSdkCompleted
-    ? 3000
-    : Math.max(1000, (requiredSeconds - 1) * 1000);
+  const now = Date.now();
+  const elapsedMs = now - Number(ticket.st);
+  if (elapsedMs < 0 || elapsedMs > AD_SESSION_TTL_MS) {
+    return res.status(400).json({ success: false, error: 'Ad verification expired. Please start a new one.' });
+  }
 
-  if (elapsedMs < minRequiredMs) {
-    const remainingSeconds = Math.max(1, Math.ceil((requiredSeconds * 1000 - elapsedMs) / 1000));
+  // Which network played? For spin / gift box the server knows (dedicated slot). For mining the client reports which
+  // tier of the waterfall finished; it can only be one of the three real networks.
+  let network: AdNetwork;
+  if (action === 'MINING') {
+    const claimed = String(req.body?.network || '');
+    network = (['RichAds', 'Monetag', 'OnClickA'] as AdNetwork[]).includes(claimed as AdNetwork) ? (claimed as AdNetwork) : 'RichAds';
+  } else {
+    network = AD_SLOT_NETWORKS[action][slot - 1];
+    // Backup rule: if the slot's own ad had no fill (twice), the app shows Monetag 12044377 instead.
+    if (String(req.body?.network || '') === 'Monetag') network = 'Monetag';
+  }
+
+  const floorSeconds = Math.max(3, Number(systemSettings.adMinWatchSeconds) || 5);
+  const minSeconds = floorSeconds;
+  if (elapsedMs < minSeconds * 1000) {
+    const remainingSeconds = Math.max(1, Math.ceil((minSeconds * 1000 - elapsedMs) / 1000));
     return res.status(400).json({
       success: false,
-      error: `Watch full ads to get Reward. Minimum ${requiredSeconds} seconds required. (${remainingSeconds}s remaining)`,
+      error: `Watch the full ad to get the reward. (${remainingSeconds}s remaining)`,
       remainingSeconds,
       canVerify: false,
     });
   }
 
-  // Official completion check: Either Monetag SDK completion signal, Waterfall, S2S confirmed, or timer completed
-  const isVerifiedSignal =
-    sdkSignal === 'MONETAG_REWARDED_COMPLETED' ||
-    (typeof sdkSignal === 'string' && sdkSignal.includes('WATERFALL')) ||
-    session.monetagS2SConfirmed === true ||
-    systemSettings.adProvider === 'SIMULATOR' ||
-    (now - session.startedAt >= (requiredSeconds * 1000));
-
-  if (!isVerifiedSignal) {
-    return res.status(400).json({
-      success: false,
-      error: 'Official ad completion signal not received. Please watch full ads to get Reward.',
-    });
+  // Optional strict mode: Monetag must confirm through the server-to-server postback.
+  if (network === 'Monetag' && process.env.REQUIRE_MONETAG_POSTBACK === '1') {
+    let confirmed = false;
+    try {
+      for (let i = 0; i < 4 && !confirmed; i++) {
+        confirmed = await hasMonetagPostback(String(p.sid));
+        if (!confirmed) await new Promise(r2 => setTimeout(r2, 800));
+      }
+    } catch (e) {
+      return adStoreFail(res, e);
+    }
+    if (!confirmed) {
+      return res.status(400).json({ success: false, error: 'Ad completion could not be confirmed. Please try again.' });
+    }
   }
 
-  const claimToken = crypto.randomBytes(24).toString('hex');
-  session.verified = true;
-  session.sdkCompleted = true;
-  session.verifiedAt = now;
-  session.claimToken = claimToken;
+  const claimToken = adSign('claim', { sid: p.sid, uid: userId, act: action, slot, vat: now, exp: now + AD_CLAIM_TTL_MS });
 
-  const legacy = adSessions.get(sessionId);
-  if (legacy) legacy.verified = true;
-
-  scheduleSaveDatabase();
-
-  // Record verified ad completion event in Supabase e4f_ad_events
   if (supabase) {
-    try {
-      const placement = session.actionType + (session.targetId ? `_${session.targetId}` : '');
-      const net = typeof sdkSignal === 'string' && sdkSignal.includes('MONETAG') ? 'Monetag'
-        : typeof sdkSignal === 'string' && sdkSignal.includes('ONCLICKA') ? 'OnClickA'
-        : typeof sdkSignal === 'string' && sdkSignal.includes('RICHADS') ? 'RichAds'
-        : (systemSettings.adProvider || 'RichAds');
-      Promise.resolve(supabase.from('e4f_ad_events').insert({
-        user_id: session.userId,
-        network: net,
-        placement,
-        reward_token: claimToken,
+    Promise.resolve(
+      supabase.from('e4f_ad_events').insert({
+        user_id: userId,
+        network,
+        placement: action + (slot ? `_${slot}` : ''),
+        reward_token: String(p.sid),
         created_at: new Date().toISOString(),
-      })).catch(() => {});
-    } catch {}
+      })
+    ).catch(() => {});
   }
 
-  res.json({
-    success: true,
-    verified: true,
-    sessionId: session.sessionId,
-    claimToken,
-    serverTime: now,
-  });
+  return res.json({ success: true, verified: true, sessionId: p.sid, claimToken, serverTime: now });
 });
 
-// Direct endpoints to record Ad Views and Events in Supabase
-app.post('/api/ads/log-view', async (req: Request, res: Response) => {
-  const { userId, network, placement } = req.body;
-  if (supabase && userId && network && placement) {
-    try {
-      await supabase.from('e4f_ad_views').insert({
-        user_id: String(userId),
-        network: String(network),
-        placement: String(placement),
-        created_at: new Date().toISOString(),
-      });
-    } catch {}
-  }
-  res.json({ success: true });
-});
+// Logging endpoints are authenticated; the server already records views/events itself.
+app.post('/api/ads/log-view', requireUserAuth, (_req: Request, res: Response) => res.json({ success: true }));
+app.post('/api/ads/log-event', requireUserAuth, (_req: Request, res: Response) => res.json({ success: true }));
 
-app.post('/api/ads/log-event', async (req: Request, res: Response) => {
-  const { userId, network, placement, rewardToken } = req.body;
-  if (supabase && userId && network && placement && rewardToken) {
-    try {
-      await supabase.from('e4f_ad_events').insert({
-        user_id: String(userId),
-        network: String(network),
-        placement: String(placement),
-        reward_token: String(rewardToken),
-        created_at: new Date().toISOString(),
-      });
-    } catch {}
-  }
-  res.json({ success: true });
-});
-
-// =========================================================================
-// ANTI-FAKE ADS & SECURE RPC REWARD ENGINE
-// =========================================================================
-const antiFakeSessions = new Map<string, { userId: string; adId: string; token: string; startedAt: number }>();
-const antiFakeDailyClaims = new Map<string, Set<string>>(); // key = `${userId}_${date}_${type}` -> Set of keys
-
-app.post('/api/ads/anti-fake/start-session', async (req: Request, res: Response) => {
-  const { userId, adId, token, startedAt } = req.body;
-  if (!token) return res.status(400).json({ success: false, error: 'Token required' });
-  const startTs = startedAt || Date.now();
-  antiFakeSessions.set(token, { userId, adId, token, startedAt: startTs });
-
-  if (supabase && userId) {
-    try {
-      await supabase.from('user_ad_logs').insert({
-        user_id: String(userId),
-        ad_id: String(adId || ''),
-        token: String(token),
-        started_at: new Date(startTs).toISOString(),
-        is_verified: false,
-      });
-    } catch (e) {
-      console.log('Log table not ready yet', e);
-    }
-  }
-  res.json({ success: true, token });
-});
-
-app.get('/api/ads/anti-fake/daily-status', async (req: Request, res: Response) => {
-  const { userId, date, type, key } = req.query;
-  const todayStr = String(date || new Date().toISOString().split('T')[0]);
-  const cleanKey = String(key || '');
-  const cleanType = String(type || '');
-
-  // 1. Check in-memory claims
-  const mapKey = `${userId}_${todayStr}_${cleanType}`;
-  const claims = antiFakeDailyClaims.get(mapKey);
-  if (claims && claims.has(cleanKey)) {
-    return res.json({ success: true, claimed: true });
-  }
-
-  // 2. Check Supabase
-  if (supabase && userId) {
-    try {
-      const { data } = await supabase
-        .from('user_daily_ads')
-        .select('id')
-        .eq('user_id', String(userId))
-        .eq('date', todayStr)
-        .eq('type', cleanType)
-        .eq('key', cleanKey)
-        .maybeSingle();
-
-      if (data) {
-        if (!antiFakeDailyClaims.has(mapKey)) {
-          antiFakeDailyClaims.set(mapKey, new Set());
-        }
-        antiFakeDailyClaims.get(mapKey)!.add(cleanKey);
-        return res.json({ success: true, claimed: true });
-      }
-    } catch (e) {
-      console.log('user_daily_ads table not ready yet', e);
-    }
-  }
-
-  res.json({ success: true, claimed: false });
-});
-
-app.post('/api/ads/anti-fake/verify-and-reward', async (req: Request, res: Response) => {
-  const { userId, type, key, token, elapsed, adId } = req.body;
-  const todayStr = new Date().toISOString().split('T')[0];
-  const cleanKey = String(key || '1');
-  const cleanType = String(type || 'gift');
-
-  // Anti-Fake Check 1: Minimum 25-second elapsed watch time
-  if (typeof elapsed !== 'number' || elapsed < 25000) {
-    if (supabase && userId && token) {
-      try {
-        await supabase.from('user_ad_logs').update({
-          is_verified: false,
-          watch_duration: Math.round((Number(elapsed) || 0) / 1000),
-          completed_at: new Date().toISOString(),
-        }).eq('token', token);
-      } catch (e) {
-        console.log('Log table not ready yet', e);
-      }
-    }
-    return res.status(400).json({ success: false, error: 'Fake Report Detected! Watch 30s' });
-  }
-
-  // Anti-Fake Check 2: Token verification
-  if (!token) {
-    return res.status(400).json({ success: false, error: 'Fake Report Detected! Invalid session token' });
-  }
-
-  // Anti-Fake Check 3: Daily Limit
-  const mapKey = `${userId}_${todayStr}_${cleanType}`;
-  const localClaims = antiFakeDailyClaims.get(mapKey);
-  if (localClaims && localClaims.has(cleanKey)) {
-    return res.status(400).json({ success: false, error: 'Already claimed today' });
-  }
-
-  if (supabase && userId) {
-    try {
-      const { data } = await supabase
-        .from('user_daily_ads')
-        .select('id')
-        .eq('user_id', String(userId))
-        .eq('date', todayStr)
-        .eq('type', cleanType)
-        .eq('key', cleanKey)
-        .maybeSingle();
-
-      if (data) {
-        return res.status(400).json({ success: false, error: 'Already claimed today' });
-      }
-    } catch (e) {
-      console.log('user_daily_ads table not ready yet', e);
-    }
-  }
-
-  // Mark Daily Claim
-  if (!antiFakeDailyClaims.has(mapKey)) {
-    antiFakeDailyClaims.set(mapKey, new Set());
-  }
-  antiFakeDailyClaims.get(mapKey)!.add(cleanKey);
-
-  if (supabase && userId) {
-    try {
-      await supabase.from('user_daily_ads').upsert({
-        user_id: String(userId),
-        date: todayStr,
-        type: cleanType,
-        key: cleanKey,
-        done: true,
-        created_at: new Date().toISOString(),
-      }, { onConflict: 'user_id,type,key,date' });
-    } catch (e) {
-      console.log('user_daily_ads table not ready yet', e);
-    }
-
-    try {
-      await supabase.from('user_ad_logs').update({
-        is_verified: true,
-        watch_duration: Math.round(elapsed / 1000),
-        completed_at: new Date().toISOString(),
-      }).eq('token', token);
-    } catch (e) {
-      console.log('Log table not ready yet', e);
-    }
-  }
-
-  // Execute Reward
-  let rewardAmount = 0;
-  if (cleanType === 'gift') {
-    rewardAmount = 2.5;
-
-    // Use Supabase RPC add_e4f_balance with direct profile update fallback
-    if (supabase && userId) {
-      try {
-        await supabase.rpc('add_e4f_balance', {
-          p_user_id: String(userId),
-          p_amount: 2.5,
-          p_spin_amount: 0,
-        });
-      } catch (rpcErr) {
-        console.log('[add_e4f_balance RPC failed, using direct profile update fallback]:', rpcErr);
-        try {
-          const { data: prof } = await supabase
-            .from('profiles')
-            .select('e4f_balance')
-            .or(`telegram_id.eq.${userId},id.eq.${userId}`)
-            .maybeSingle();
-          const currentE4F = Number(prof?.e4f_balance || 0);
-          await supabase
-            .from('profiles')
-            .update({ e4f_balance: currentE4F + 2.5 })
-            .or(`telegram_id.eq.${userId},id.eq.${userId}`);
-        } catch (e) {
-          console.log('Profiles table fallback error:', e);
-        }
-      }
-    }
-
-    // Also update server balances cache
-    const userBalance = await getSupabaseBalance(String(userId));
-    if (userBalance) {
-      userBalance.e4f += 2.5;
-      await setSupabaseBalance(String(userId), userBalance).catch(() => {});
-      scheduleSaveDatabase();
-    }
-
-    const tx: TxRecord = {
-      id: `tx_${Date.now()}_gift_${cleanKey}`,
-      userId: String(userId),
-      asset: 'E4F',
-      amount: 2.5,
-      direction: 'IN',
-      source: 'GIFT_BOX_REWARD',
-      status: 'COMPLETED',
-      timestamp: Date.now(),
-      note: `Mystery Gift Box #${cleanKey} (+2.5 E4F)`,
-    };
-    await recordTransaction(tx);
-  }
-
-  res.json({ success: true, rewardAmount, rewardAsset: 'E4F' });
-});
-
-// Check Active Ad Session for user (continues session on return/remount/refresh)
-app.get('/api/mining/:userId/ad-session', (req: Request, res: Response) => {
-  const { userId } = req.params;
-  const now = Date.now();
-
-  const session = Array.from(miningAdSessions.values()).find(
-    s => s.userId === userId && (!s.actionType || s.actionType === 'MINING') && !s.consumed && (now - s.startedAt) < 15 * 60 * 1000
-  );
-
-  if (!session) {
-    return res.json({ success: true, hasActiveSession: false, session: null, serverTime: now });
-  }
-
-  const miningSec = session.durationSeconds || systemSettings.miningAdDurationSeconds || systemSettings.adMiningDurationSeconds || 30;
-  const elapsedMs = now - session.startedAt;
-  const remainingSeconds = Math.max(0, Math.ceil((session.endsAt - now) / 1000));
-  const canVerify = elapsedMs >= (miningSec * 1000) || session.verified;
-
-  res.json({
-    success: true,
-    hasActiveSession: true,
-    session: {
-      sessionId: session.sessionId,
-      token: session.token,
-      startedAt: session.startedAt,
-      endsAt: session.endsAt,
-      durationSeconds: session.durationSeconds,
-      remainingSeconds,
-      canVerify,
-      verified: session.verified,
-      serverTime: now,
-      zoneId: systemSettings.monetagZoneId || '12044377',
-      adDirectLink: systemSettings.adProvider === 'MONETAG' ? systemSettings.monetagDirectLink : (systemSettings.adsterraDirectLink || systemSettings.monetagDirectLink),
-    },
-    serverTime: now,
-  });
-});
-
-// Ad Session & Verification (Single 60-Second Server-Authoritative Session)
-app.post('/api/mining/ad-session', (req: Request, res: Response) => {
-  const { userId } = req.body;
-  if (!userId) {
-    return res.status(400).json({ success: false, error: 'User ID is required' });
-  }
-
-  const now = Date.now();
-  // Reuse existing active session if one exists within 15 minutes and not consumed
-  let session = Array.from(miningAdSessions.values()).find(
-    s => s.userId === userId && (!s.actionType || s.actionType === 'MINING') && !s.consumed && (now - s.createdAt) < 15 * 60 * 1000
-  );
-
-  const isExistingSession = !!session;
-
-  if (!session) {
-    const sessionId = `ad_${now}_${Math.random().toString(36).substring(2, 9)}`;
-    const token = crypto.randomBytes(24).toString('hex');
-    const DURATION_SECONDS = systemSettings.miningAdDurationSeconds || systemSettings.adMiningDurationSeconds || 30;
-    session = {
-      sessionId,
-      userId,
-      actionType: 'MINING',
-      startedAt: 0, // Starts when user actually clicks and watches real ad
-      endsAt: now + DURATION_SECONDS * 1000,
-      durationSeconds: DURATION_SECONDS,
-      verified: false,
-      consumed: false,
-      token,
-      createdAt: now,
-      adOpenedAt: 0,
-      watchStarted: false,
-    };
-    miningAdSessions.set(sessionId, session);
-    adSessions.set(sessionId, {
-      userId,
-      createdAt: now,
-      verified: false,
-      token,
-    });
-    scheduleSaveDatabase();
-  }
-
-  const targetDurationSec = session.durationSeconds || systemSettings.miningAdDurationSeconds || systemSettings.adMiningDurationSeconds || 30;
-  const remainingSeconds = session.startedAt > 0
-    ? Math.max(0, Math.ceil((targetDurationSec * 1000 - (now - session.startedAt)) / 1000))
-    : targetDurationSec;
-  const canVerify = session.startedAt > 0 && ((now - session.startedAt) >= Math.max(1000, (targetDurationSec - 1) * 1000) || session.verified);
-  const adDirectLink = systemSettings.adProvider === 'MONETAG' ? systemSettings.monetagDirectLink : (systemSettings.adsterraDirectLink || systemSettings.monetagDirectLink);
-
-  res.json({
-    success: true,
-    isExistingSession,
-    sessionId: session.sessionId,
-    token: session.token,
-    startedAt: session.startedAt,
-    endsAt: session.endsAt,
-    durationSeconds: session.durationSeconds,
-    remainingSeconds,
-    canVerify,
-    verified: session.verified,
-    serverTime: now,
-    provider: systemSettings.adProvider,
-    zoneId: systemSettings.monetagZoneId || '12044377',
-    adDirectLink,
-    monetagDirectLink: systemSettings.monetagDirectLink,
-    adsterraDirectLink: systemSettings.adsterraDirectLink,
-  });
-});
-
-app.post('/api/mining/start-ad-playback', (req: Request, res: Response) => {
-  const { sessionId, token } = req.body;
-  const session = miningAdSessions.get(sessionId) || (adSessions.get(sessionId) as any);
-
-  if (!session || session.token !== token) {
-    return res.status(400).json({ success: false, error: 'Invalid or expired ad session' });
-  }
-
-  (session as any).startedPlaybackAt = Date.now();
-  res.json({ success: true, startedPlaybackAt: (session as any).startedPlaybackAt });
-});
-
-// Strict 60-Second Server Clock Ad Verification
-app.post('/api/mining/verify-ad', (req: Request, res: Response) => {
-  const { sessionId, token, userId } = req.body;
-  const session = miningAdSessions.get(sessionId);
-
-  if (!session || session.token !== token) {
-    return res.status(400).json({ success: false, error: 'Invalid or expired ad verification session' });
-  }
-
-  if (userId && session.userId !== userId) {
-    return res.status(403).json({ success: false, error: 'Ad session does not belong to this user' });
-  }
-
-  if (session.consumed) {
-    return res.status(400).json({ success: false, error: 'Ad session has already been used' });
-  }
-
-  const miningSec = session.durationSeconds || systemSettings.miningAdDurationSeconds || systemSettings.adMiningDurationSeconds || 30;
-
-  // Must have actually started watching real ad
-  if (!session.watchStarted || !session.startedAt || session.startedAt === 0) {
-    return res.status(400).json({
-      success: false,
-      error: `Mining locked. You must open and watch the real ad for ${miningSec} seconds.`,
-      canVerify: false,
-    });
-  }
-
-  const now = Date.now();
-  const elapsedMs = now - session.startedAt;
-  const REQUIRED_DURATION_MS = miningSec * 1000;
-
-  // Can verify if completed via Monetag SDK or full duration elapsed
-  if (!session.verified && elapsedMs < Math.max(1000, REQUIRED_DURATION_MS - 1000)) {
-    const remainingSeconds = Math.max(1, Math.ceil((REQUIRED_DURATION_MS - elapsedMs) / 1000));
-    return res.status(400).json({
-      success: false,
-      error: `Mining locked. You must complete the full ${miningSec} seconds. (${remainingSeconds}s remaining)`,
-      remainingSeconds,
-      canVerify: false,
-      serverTime: now,
-    });
-  }
-
-  session.verified = true;
-  session.verifiedAt = now;
-  session.claimToken = session.claimToken || crypto.randomBytes(24).toString('hex');
-  const legacy = adSessions.get(sessionId);
-  if (legacy) legacy.verified = true;
-
-  scheduleSaveDatabase();
-
-  res.json({
-    success: true,
-    verified: true,
-    sessionId: session.sessionId,
-    claimToken: session.claimToken,
-    serverTime: now,
-  });
-});
+// Retired endpoints (they could mint rewards without a real ad). Kept only to return a clear answer.
+app.all(
+  ['/api/ads/anti-fake/start-session', '/api/ads/anti-fake/daily-status', '/api/ads/anti-fake/verify-and-reward',
+   '/api/mining/ad-session', '/api/mining/start-ad-playback', '/api/mining/verify-ad'],
+  (_req: Request, res: Response) => res.status(410).json({ success: false, error: 'This endpoint has been retired.' })
+);
+app.get('/api/mining/:userId/ad-session', (_req: Request, res: Response) =>
+  res.json({ success: true, hasActiveSession: false, session: null, serverTime: Date.now() })
+);
 
 // Start Mining Session (Guarded by strict ad-session verification for both endpoints)
 const handleStartMining = async (req: Request, res: Response) => {
-  const { userId, adSessionId, claimToken } = req.body;
+  const userId = String((req as any).verifiedUserId || '');
+  const { adSessionId, claimToken } = req.body || {};
   const now = Date.now();
+  if (!userId) return res.status(401).json({ success: false, error: 'Authentication required' });
 
   const user = await getUserFromSupabase(userId);
   if (!user) {
@@ -3499,72 +3210,25 @@ const handleStartMining = async (req: Request, res: Response) => {
     return res.status(400).json({ success: false, error: 'A mining session is already active' });
   }
 
-  // If ads are required, verify ad session strictly
-  let adVerified = false;
-  if (systemSettings.rewardedAdRequired) {
-    if (!adSessionId && !claimToken) {
-      return res.status(403).json({
-        success: false,
-        error: 'Mining locked. Rewarded ad completion is required to start mining.'
-      });
-    }
-
-    const session = adSessionId ? miningAdSessions.get(adSessionId) : undefined;
-    const isClaimTokenValid = Boolean(claimToken && ((session && claimToken === session.claimToken) || (typeof claimToken === 'string' && claimToken.startsWith('clm_'))));
-
-    if ((!session || session.userId !== userId) && !isClaimTokenValid) {
-      return res.status(403).json({
-        success: false,
-        error: 'Rewarded advertisement verification failed: invalid or unknown ad session.'
-      });
-    }
-
-    if (session) {
-      if (session.actionType && session.actionType !== 'MINING') {
-        return res.status(403).json({
-          success: false,
-          error: 'Ad session was not generated for Mining.'
-        });
-      }
-
-      if (session.consumed) {
-        return res.status(403).json({
-          success: false,
-          error: 'Rewarded ad session has already been used. Please complete a new rewarded ad.'
-        });
-      }
-
-      const isTokenValid = Boolean(claimToken && session.claimToken && claimToken === session.claimToken);
-      if (!session.verified && !isTokenValid && !isClaimTokenValid) {
-        if (!session.watchStarted || !session.startedAt || session.startedAt === 0) {
-          return res.status(403).json({
-            success: false,
-            error: 'Mining locked. You must open and watch the real ad before starting mining.'
-          });
-        }
-        const elapsedMs = now - session.startedAt;
-        const minDurationMs = (systemSettings.miningAdDurationSeconds || systemSettings.adMiningDurationSeconds || 30) * 1000;
-        if (elapsedMs < minDurationMs) {
-          const remainingSeconds = Math.max(1, Math.ceil((minDurationMs - elapsedMs) / 1000));
-          return res.status(403).json({
-            success: false,
-            error: `Mining locked. You must complete the rewarded ad. (${remainingSeconds}s remaining)`,
-            remainingSeconds,
-          });
-        }
-      }
-
-      session.consumed = true;
-      session.consumedAt = now;
-      if (adSessionId) adSessions.delete(adSessionId);
-    }
-
-    adVerified = true;
-    scheduleSaveDatabase();
+  // A completed rewarded ad is ALWAYS required to start mining (cannot be switched off).
+  if (!adSessionId || !claimToken) {
+    return res.status(403).json({
+      success: false,
+      error: 'Mining locked. Rewarded ad completion is required to start mining.',
+    });
   }
+  try {
+    const redeemed = await redeemAdClaim(userId, adSessionId, claimToken, 'MINING', 0);
+    if (!redeemed.ok) {
+      return res.status(redeemed.status || 403).json({ success: false, error: redeemed.error || 'Ad verification failed' });
+    }
+  } catch (err: any) {
+    return adStoreFail(res, err);
+  }
+  const adVerified = true;
 
   const durationSec = systemSettings.miningDurationHours * 3600;
-  const referralCount = 12;
+  const referralCount = Number((systemSettings as any).baseReferralBoostCount ?? 12);
   const boostPercent = calculateMiningBoost(referralCount);
   const effectiveMiningRate = Number((systemSettings.miningRatePerHour * (1 + boostPercent / 100)).toFixed(4));
   const estimatedReward = Number((effectiveMiningRate * systemSettings.miningDurationHours).toFixed(4));
@@ -3585,7 +3249,14 @@ const handleStartMining = async (req: Request, res: Response) => {
   miningSessions.push(session);
   if (supabase) {
     try {
-      await supabase.from('mining_sessions').insert({
+      // Finished-but-unclaimed sessions must not count as "active" (one ACTIVE session per user is enforced by a DB index)
+      await supabase
+        .from('mining_sessions')
+        .update({ status: 'COMPLETED' })
+        .eq('user_id', userId)
+        .eq('status', 'ACTIVE')
+        .lte('end_time', now);
+      const { error: insErr } = await supabase.from('mining_sessions').insert({
         id: session.id,
         user_id: userId,
         start_time: session.startTime,
@@ -3597,10 +3268,22 @@ const handleStartMining = async (req: Request, res: Response) => {
         ad_verified: session.adVerified,
         ad_session_id: session.adSessionId || '',
       });
+      if (insErr) {
+        if ((insErr as any).code === '23505') {
+          // Another request already started mining for this user (one active session per user)
+          const idx = miningSessions.indexOf(session);
+          if (idx >= 0) miningSessions.splice(idx, 1);
+          return res.status(400).json({ success: false, error: 'A mining session is already active' });
+        }
+        console.warn('[Supabase] Failed to persist mining session:', insErr.message);
+      }
     } catch (e) {
       console.warn('[Supabase] Failed to persist mining session:', e);
     }
   }
+
+  // Trusted Miner: 120 consecutive UTC days of mining => the account is verified automatically
+  try { await evaluateTrustedMiner(userId, now); } catch (e) { console.warn('[TrustedMiner] check failed:', e); }
 
   // One-time 5 USDT Referral Bonus awarded to referrer when invited friend starts mining
   try {
@@ -3710,13 +3393,15 @@ const handleStartMining = async (req: Request, res: Response) => {
   });
 };
 
-app.post('/api/mining/start', handleStartMining);
-app.post('/api/start-mining', handleStartMining);
+app.post('/api/mining/start', requireUserAuth, handleStartMining);
+app.post('/api/start-mining', requireUserAuth, handleStartMining);
 
 // Claim Mining Reward (Manual Claim after 8 Hours)
-app.post('/api/mining/claim', async (req: Request, res: Response) => {
-  const { userId, sessionId } = req.body;
+app.post('/api/mining/claim', requireUserAuth, async (req: Request, res: Response) => {
+  const userId = String((req as any).verifiedUserId || '');
+  const { sessionId } = req.body || {};
   const now = Date.now();
+  if (!userId) return res.status(401).json({ success: false, error: 'Authentication required' });
 
   let session = miningSessions.find(s => s.id === sessionId && s.userId === userId);
   if (!session && supabase) {
@@ -3759,9 +3444,34 @@ app.post('/api/mining/claim', async (req: Request, res: Response) => {
     return res.status(400).json({ success: false, error: `Mining session still in progress. ${remainingSec}s remaining` });
   }
 
+  // Atomic one-time claim marker in the database (works across serverless instances).
+  // Only the request that flips the row from not-CLAIMED to CLAIMED may credit the reward.
+  if (supabase) {
+    try {
+      const { data: flipped, error: flipErr } = await supabase
+        .from('mining_sessions')
+        .update({ status: 'CLAIMED', claimed_at: now })
+        .eq('id', session.id)
+        .eq('user_id', userId)
+        .neq('status', 'CLAIMED')
+        .select('id');
+      if (flipErr) throw new Error(flipErr.message);
+      if (!flipped || flipped.length === 0) {
+        session.status = 'CLAIMED';
+        return res.status(400).json({ success: false, error: 'Session reward has already been claimed' });
+      }
+    } catch (claimErr: any) {
+      console.error('[Mining] atomic claim failed:', claimErr?.message || claimErr);
+      return res.status(503).json({ success: false, error: 'Could not claim right now. Please try again.' });
+    }
+  }
+
   // Credit E4F to balance (Server Authoritative)
   const userBalance = await getSupabaseBalance(userId);
   if (!userBalance) {
+    if (supabase) {
+      try { await supabase.from('mining_sessions').update({ status: 'COMPLETED', claimed_at: null }).eq('id', session.id); } catch {}
+    }
     return res.status(404).json({ success: false, error: 'User wallet balance not found' });
   }
 
@@ -3803,7 +3513,7 @@ app.post('/api/mining/claim', async (req: Request, res: Response) => {
 });
 
 // Mining History
-app.get('/api/mining/:userId/history', (req: Request, res: Response) => {
+app.get('/api/mining/:userId/history', requireUserAuth, (req: Request, res: Response) => {
   const { userId } = req.params;
   const history = miningSessions
     .filter(s => s.userId === userId)
@@ -3813,7 +3523,7 @@ app.get('/api/mining/:userId/history', (req: Request, res: Response) => {
 
 // 4. Rewards API (/api/rewards)
 // Daily Check-in (7-Day Consecutive Streak & Rewards Progression with Supabase e4f_daily_checkins)
-app.get('/api/rewards/:userId/daily-checkin', async (req: Request, res: Response) => {
+app.get('/api/rewards/:userId/daily-checkin', requireUserAuth, async (req: Request, res: Response) => {
   const { userId } = req.params;
   const checkIn = await loadUserDailyCheckIn(userId);
   const { todayUtc, yesterdayUtc } = getUtcDates();
@@ -3858,7 +3568,7 @@ app.get('/api/rewards/:userId/daily-checkin', async (req: Request, res: Response
   });
 });
 
-app.post('/api/rewards/daily-checkin/claim', async (req: Request, res: Response) => {
+app.post('/api/rewards/daily-checkin/claim', requireUserAuth, async (req: Request, res: Response) => {
   const { userId } = req.body;
   if (!userId) return res.status(400).json({ success: false, error: 'User ID is required' });
 
@@ -3958,332 +3668,321 @@ app.post('/api/rewards/daily-checkin/claim', async (req: Request, res: Response)
 });
 
 // Spin & Win Wheel (Server-Determined Result with Rewarded Ad Verification)
-app.get('/api/rewards/:userId/spin-status', (req: Request, res: Response) => {
+app.get('/api/rewards/:userId/spin-status', requireUserAuth, async (req: Request, res: Response) => {
   const { userId } = req.params;
-  const todayStr = new Date().toISOString().split('T')[0];
-  const spinData = userDailySpins.get(userId);
-  const spinsUsed = (spinData && spinData.date === todayStr) ? spinData.count : 0;
-  const maxSpins = systemSettings.rewardSpinMaxDaily || 5;
-  const spinsRemaining = Math.max(0, maxSpins - spinsUsed);
-  const activePrizes = systemSettings.spinWheelPrizes && systemSettings.spinWheelPrizes.length > 0
-    ? systemSettings.spinWheelPrizes
-    : defaultSpinWheelPrizes;
+  try {
+    const maxSpins = spinMaxDaily();
+    const used = await getDailySlots(userId, 'SPIN');
+    const spinsUsed = Math.min(maxSpins, used.length);
+    const spinsRemaining = Math.max(0, maxSpins - spinsUsed);
+    const activePrizes = systemSettings.spinWheelPrizes && systemSettings.spinWheelPrizes.length > 0
+      ? systemSettings.spinWheelPrizes
+      : defaultSpinWheelPrizes;
 
-  res.json({
-    spinsUsed,
-    maxSpins,
-    spinsRemainingToday: spinsRemaining,
-    adRequired: systemSettings.rewardSpinAdRequired,
-    prizes: activePrizes,
-    zoneId: systemSettings.monetagZoneId || '12044377',
-    provider: systemSettings.adProvider,
-  });
-});
-
-app.post(['/api/rewards/spin', '/api/rewards/spin/claim', '/rewards/spin', '/rewards/spin/claim'], async (req: Request, res: Response) => {
-  const { userId, adSessionId, claimToken } = req.body;
-  const userBalance = await getSupabaseBalance(userId);
-  if (!userBalance) return res.status(404).json({ success: false, error: 'User not found' });
-
-  // Enforce Max 5 Spins per Day
-  const todayStr = new Date().toISOString().split('T')[0];
-  let spinData = userDailySpins.get(userId);
-  if (!spinData || spinData.date !== todayStr) {
-    spinData = { date: todayStr, count: 0 };
-    userDailySpins.set(userId, spinData);
-  }
-
-  const maxSpins = systemSettings.rewardSpinMaxDaily || 5;
-  if (spinData.count >= maxSpins) {
-    return res.status(400).json({
-      success: false,
-      error: `Daily spin limit of ${maxSpins} reached. Resets tomorrow at 00:00 UTC.`,
-      spinsRemainingToday: 0,
+    res.json({
+      spinsUsed,
+      maxSpins,
+      spinsRemainingToday: spinsRemaining,
+      nextSpinSlot: firstUnusedSlot(used, maxSpins) || null,
+      adRequired: true,
+      prizes: activePrizes,
+      zoneId: resolveAdId('SPIN', 2),
+      provider: 'RichAds',
     });
+  } catch (err: any) {
+    return adStoreFail(res, err);
   }
-
-  // Strict Rewarded Ad Verification: Each of the 5 spins strictly requires its own completed ad
-  if (systemSettings.rewardSpinAdRequired !== false) {
-    if (!adSessionId && !claimToken) {
-      return res.status(403).json({
-        success: false,
-        error: 'Spin locked. Rewarded ad completion is strictly required for each spin. No spin can count without watching an ad.',
-      });
-    }
-
-    const session = adSessionId ? miningAdSessions.get(adSessionId) : undefined;
-    const isClaimTokenValid = Boolean(claimToken && ((session && claimToken === session.claimToken) || (typeof claimToken === 'string' && claimToken.startsWith('clm_'))));
-
-    if ((!session || session.userId !== userId) && !isClaimTokenValid) {
-      return res.status(403).json({
-        success: false,
-        error: 'Invalid or unknown ad verification session for spin.',
-      });
-    }
-
-    if (session) {
-      if (session.actionType && session.actionType !== 'SPIN') {
-        return res.status(403).json({
-          success: false,
-          error: 'Ad session was not generated for Spin & Win.',
-        });
-      }
-
-      if (session.consumed) {
-        return res.status(403).json({
-          success: false,
-          error: 'Rewarded ad session has already been used. Please complete a new ad for this spin.',
-        });
-      }
-
-      if (!session.verified && !isClaimTokenValid) {
-        return res.status(403).json({
-          success: false,
-          error: 'Rewarded ad not verified. You must complete the rewarded ad before spinning.',
-        });
-      }
-
-      // Consume the ad session permanently (one-time use)
-      session.consumed = true;
-      session.consumedAt = Date.now();
-      if (adSessionId) adSessions.delete(adSessionId);
-    }
-  }
-
-  spinData.count += 1;
-  const spinsRemainingToday = Math.max(0, maxSpins - spinData.count);
-
-  const activePrizes = systemSettings.spinWheelPrizes && systemSettings.spinWheelPrizes.length > 0
-    ? systemSettings.spinWheelPrizes
-    : defaultSpinWheelPrizes;
-
-  // Weighted random or random pick
-  const selectedIndex = Math.floor(Math.random() * activePrizes.length);
-  const prize = activePrizes[selectedIndex];
-
-  if (prize.asset === 'USDT') {
-    userBalance.usdt += prize.amount;
-  } else {
-    userBalance.e4f += prize.amount;
-  }
-
-  const tx: TxRecord = {
-    id: `tx_${Date.now()}_spin`,
-    userId,
-    asset: prize.asset,
-    amount: prize.amount,
-    direction: 'IN',
-    source: 'SPIN_REWARD',
-    status: 'COMPLETED',
-    timestamp: Date.now(),
-    note: `Spin & Win Prize: ${prize.label} (${spinData.count}/${maxSpins})`,
-  };
-  await recordTransaction(tx);
-  await setSupabaseBalance(userId, userBalance).catch(() => {});
-  scheduleSaveDatabase();
-
-  res.json({
-    success: true,
-    prizeIndex: selectedIndex,
-    prize,
-    balances: userBalance,
-    transaction: tx,
-    spinsRemainingToday,
-    spinsUsedToday: spinData.count,
-  });
 });
 
-// 5 Mystery Gift Boxes (Server-Authoritative with Rewarded Ad Verification)
-app.get('/api/rewards/:userId/gift-boxes', (req: Request, res: Response) => {
-  const { userId } = req.params;
-  const todayStr = new Date().toISOString().split('T')[0];
+app.post(['/api/rewards/spin', '/api/rewards/spin/claim', '/rewards/spin', '/rewards/spin/claim'], requireUserAuth, async (req: Request, res: Response) => {
+  const userId = String((req as any).verifiedUserId || '');
+  const { adSessionId, claimToken } = req.body || {};
+  if (!userId) return res.status(401).json({ success: false, error: 'Authentication required' });
 
-  let dailyOpen = userDailyGiftBoxOpens.get(userId);
-  if (!dailyOpen || dailyOpen.date !== todayStr) {
-    dailyOpen = { date: todayStr, count: 0, openedBoxIds: [] };
-    userDailyGiftBoxOpens.set(userId, dailyOpen);
-  }
+  try {
+    // 1. Daily limit (durable) and the slot this spin belongs to
+    const maxSpins = spinMaxDaily();
+    const used = await getDailySlots(userId, 'SPIN');
+    const slot = firstUnusedSlot(used, maxSpins);
+    if (!slot) {
+      return res.status(400).json({
+        success: false,
+        error: `Daily spin limit of ${maxSpins} reached. Resets tomorrow at 00:00 UTC.`,
+        spinsRemainingToday: 0,
+      });
+    }
 
-  const maxBoxes = systemSettings.giftBoxMaxDaily || 5;
-  const boxesRemainingToday = Math.max(0, maxBoxes - dailyOpen.count);
-  const canOpenToday = dailyOpen.count < maxBoxes;
+    // 2. A finished rewarded ad of THIS slot is ALWAYS required (cannot be switched off)
+    if (!adSessionId || !claimToken) {
+      return res.status(403).json({
+        success: false,
+        error: 'Spin locked. Rewarded ad completion is strictly required for each spin.',
+      });
+    }
+    const redeemed = await redeemAdClaim(userId, adSessionId, claimToken, 'SPIN', slot);
+    if (!redeemed.ok) {
+      return res.status(redeemed.status || 403).json({ success: false, error: redeemed.error || 'Ad verification failed' });
+    }
 
-  const activeBoxConfigs = systemSettings.giftBoxesConfig && systemSettings.giftBoxesConfig.length > 0
-    ? systemSettings.giftBoxesConfig
-    : defaultGiftBoxesConfig;
+    // 3. Claim the slot atomically (a duplicate / parallel request loses here and gets nothing)
+    if (!(await claimDailySlot(userId, 'SPIN', slot))) {
+      return res.status(409).json({ success: false, error: 'This spin has already been used.' });
+    }
 
-  // Build the 5 boxes with today's open status and configured prizes
-  const boxes = activeBoxConfigs.map((cfg, idx) => {
-    const boxId = cfg.id || (idx + 1);
-    const isOpened = dailyOpen!.openedBoxIds.includes(boxId);
-    return {
-      id: boxId,
-      boxNumber: cfg.boxNumber || (idx + 1),
-      name: cfg.name,
-      rewardAsset: cfg.rewardAsset,
-      rewardAmount: cfg.rewardAmount,
-      color: cfg.color || '#38BDF8',
-      isOpened,
+    // 4. Reward
+    const userBalance = await getSupabaseBalance(userId);
+    if (!userBalance) return res.status(404).json({ success: false, error: 'User not found' });
+
+    const spinsUsedToday = used.length + 1;
+    const spinsRemainingToday = Math.max(0, maxSpins - spinsUsedToday);
+
+    const activePrizes = systemSettings.spinWheelPrizes && systemSettings.spinWheelPrizes.length > 0
+      ? systemSettings.spinWheelPrizes
+      : defaultSpinWheelPrizes;
+
+    const selectedIndex = crypto.randomInt(0, activePrizes.length);
+    const prize = activePrizes[selectedIndex];
+
+    if (prize.asset === 'USDT') {
+      userBalance.usdt += prize.amount;
+    } else {
+      userBalance.e4f += prize.amount;
+    }
+
+    const tx: TxRecord = {
+      id: `tx_${Date.now()}_spin`,
+      userId,
+      asset: prize.asset,
+      amount: prize.amount,
+      direction: 'IN',
+      source: 'SPIN_REWARD',
+      status: 'COMPLETED',
+      timestamp: Date.now(),
+      note: `Spin & Win Prize: ${prize.label} (${spinsUsedToday}/${maxSpins})`,
     };
-  });
+    await recordTransaction(tx);
+    await setSupabaseBalance(userId, userBalance).catch(() => {});
+    scheduleSaveDatabase();
 
-  // Keep in userGiftBoxes for fast lookup
-  userGiftBoxes.set(userId, boxes);
-
-  res.json({
-    boxes,
-    canOpenToday,
-    boxesUsedToday: dailyOpen.count,
-    maxDailyBoxes: maxBoxes,
-    boxesRemainingToday,
-    adRequired: systemSettings.giftBoxAdRequired,
-    zoneId: systemSettings.monetagZoneId || '12044377',
-    provider: systemSettings.adProvider,
-  });
+    return res.json({
+      success: true,
+      prizeIndex: selectedIndex,
+      prize,
+      balances: userBalance,
+      transaction: tx,
+      spinsRemainingToday,
+      spinsUsedToday,
+    });
+  } catch (err: any) {
+    return adStoreFail(res, err);
+  }
 });
 
-app.post(['/api/rewards/gift-box/open', '/api/rewards/gift-box/claim', '/rewards/gift-box/open', '/rewards/gift-box/claim'], async (req: Request, res: Response) => {
-  const { userId, boxId, adSessionId, claimToken } = req.body;
-  const userBalance = await getSupabaseBalance(userId);
-  if (!userBalance) return res.status(404).json({ success: false, error: 'User not found' });
+app.get('/api/rewards/:userId/gift-boxes', requireUserAuth, async (req: Request, res: Response) => {
+  const { userId } = req.params;
+  try {
+    const maxBoxes = boxMaxDaily();
+    const opened = await getDailySlots(userId, 'GIFT_BOX');
+    const boxesRemainingToday = Math.max(0, maxBoxes - opened.length);
+    const canOpenToday = opened.length < maxBoxes;
+
+    const activeBoxConfigs = systemSettings.giftBoxesConfig && systemSettings.giftBoxesConfig.length > 0
+      ? systemSettings.giftBoxesConfig
+      : defaultGiftBoxesConfig;
+
+    const boxes = activeBoxConfigs.map((cfg, idx) => {
+      const boxId = cfg.id || (idx + 1);
+      return {
+        id: boxId,
+        boxNumber: cfg.boxNumber || (idx + 1),
+        name: cfg.name,
+        rewardAsset: cfg.rewardAsset,
+        rewardAmount: cfg.rewardAmount,
+        color: cfg.color || '#38BDF8',
+        isOpened: opened.includes(Number(boxId)),
+      };
+    });
+
+    res.json({
+      boxes,
+      canOpenToday,
+      boxesUsedToday: opened.length,
+      maxDailyBoxes: maxBoxes,
+      boxesRemainingToday,
+      adRequired: true,
+      zoneId: resolveAdId('GIFT_BOX', 2),
+      provider: 'RichAds',
+    });
+  } catch (err: any) {
+    return adStoreFail(res, err);
+  }
+});
+
+app.post(['/api/rewards/gift-box/open', '/api/rewards/gift-box/claim', '/rewards/gift-box/open', '/rewards/gift-box/claim'], requireUserAuth, async (req: Request, res: Response) => {
+  const userId = String((req as any).verifiedUserId || '');
+  const { boxId, adSessionId, claimToken } = req.body || {};
+  if (!userId) return res.status(401).json({ success: false, error: 'Authentication required' });
 
   const numBoxId = Number(boxId);
-  const todayStr = new Date().toISOString().split('T')[0];
-  let dailyOpen = userDailyGiftBoxOpens.get(userId);
-  if (!dailyOpen || dailyOpen.date !== todayStr) {
-    dailyOpen = { date: todayStr, count: 0, openedBoxIds: [] };
-    userDailyGiftBoxOpens.set(userId, dailyOpen);
+  const maxBoxes = boxMaxDaily();
+  if (!Number.isInteger(numBoxId) || numBoxId < 1 || numBoxId > maxBoxes) {
+    return res.status(400).json({ success: false, error: 'Invalid gift box number' });
   }
 
-  const maxBoxes = systemSettings.giftBoxMaxDaily || 5;
-  if (dailyOpen.count >= maxBoxes) {
-    return res.status(400).json({
-      success: false,
-      error: `Daily gift box limit of ${maxBoxes} reached. Resets at 00:00 UTC.`,
-      boxesRemainingToday: 0,
-    });
-  }
-
-  if (dailyOpen.openedBoxIds.includes(numBoxId)) {
-    return res.status(400).json({
-      success: false,
-      error: `Gift Box #${numBoxId} has already been opened today. Resets at 00:00 UTC.`,
-    });
-  }
-
-  // Strict Rewarded Ad Verification: Each of the 5 gift boxes strictly requires its own completed ad
-  if (systemSettings.giftBoxAdRequired !== false) {
-    if (!adSessionId && !claimToken) {
-      return res.status(403).json({
+  try {
+    // 1. Durable daily limit
+    const opened = await getDailySlots(userId, 'GIFT_BOX');
+    if (opened.length >= maxBoxes) {
+      return res.status(400).json({
         success: false,
-        error: 'Box locked. Rewarded ad completion is strictly required to unlock this gift box. No box can open without watching an ad.',
+        error: `Daily gift box limit of ${maxBoxes} reached. Resets at 00:00 UTC.`,
+        boxesRemainingToday: 0,
+      });
+    }
+    if (opened.includes(numBoxId)) {
+      return res.status(400).json({
+        success: false,
+        error: `Gift Box #${numBoxId} has already been opened today. Resets at 00:00 UTC.`,
       });
     }
 
-    const session = adSessionId ? miningAdSessions.get(adSessionId) : undefined;
-    const isClaimTokenValid = Boolean(claimToken && ((session && claimToken === session.claimToken) || (typeof claimToken === 'string' && claimToken.startsWith('clm_'))));
-
-    if ((!session || session.userId !== userId) && !isClaimTokenValid) {
+    // 2. A finished rewarded ad of THIS box slot is ALWAYS required
+    if (!adSessionId || !claimToken) {
       return res.status(403).json({
         success: false,
-        error: 'Invalid or unknown ad verification session for gift box.',
+        error: 'Box locked. Rewarded ad completion is strictly required to unlock this gift box.',
       });
     }
-
-    if (session) {
-      if (session.actionType && session.actionType !== 'GIFT_BOX') {
-        return res.status(403).json({
-          success: false,
-          error: 'Ad session was not generated for Mystery Gift Box.',
-        });
-      }
-
-      if (session.targetId && session.targetId !== numBoxId) {
-        return res.status(403).json({
-          success: false,
-          error: `Ad session was issued for Box #${session.targetId}, not Box #${numBoxId}.`,
-        });
-      }
-
-      if (session.consumed) {
-        return res.status(403).json({
-          success: false,
-          error: 'Rewarded ad session has already been used. Please complete a new ad to unlock this box.',
-        });
-      }
-
-      if (!session.verified && !isClaimTokenValid) {
-        return res.status(403).json({
-          success: false,
-          error: 'Rewarded ad not verified. You must complete the rewarded ad before opening the box.',
-        });
-      }
-
-      // Consume the ad session permanently (one-time use)
-      session.consumed = true;
-      session.consumedAt = Date.now();
-      if (adSessionId) adSessions.delete(adSessionId);
+    const redeemed = await redeemAdClaim(userId, adSessionId, claimToken, 'GIFT_BOX', numBoxId);
+    if (!redeemed.ok) {
+      return res.status(redeemed.status || 403).json({ success: false, error: redeemed.error || 'Ad verification failed' });
     }
+
+    // 3. Atomically claim this box for today
+    if (!(await claimDailySlot(userId, 'GIFT_BOX', numBoxId))) {
+      return res.status(409).json({ success: false, error: `Gift Box #${numBoxId} has already been opened today.` });
+    }
+
+    // 4. Reward
+    const userBalance = await getSupabaseBalance(userId);
+    if (!userBalance) return res.status(404).json({ success: false, error: 'User not found' });
+
+    const activeBoxConfigs = systemSettings.giftBoxesConfig && systemSettings.giftBoxesConfig.length > 0
+      ? systemSettings.giftBoxesConfig
+      : defaultGiftBoxesConfig;
+
+    const boxConfig = activeBoxConfigs.find(b => b.id === numBoxId) || activeBoxConfigs[numBoxId - 1] || {
+      id: numBoxId,
+      boxNumber: numBoxId,
+      name: `Mystery Box #${numBoxId}`,
+      rewardAsset: 'E4F' as const,
+      rewardAmount: 2.5,
+    };
+
+    if (boxConfig.rewardAsset === 'USDT') {
+      userBalance.usdt += boxConfig.rewardAmount;
+    } else {
+      userBalance.e4f += boxConfig.rewardAmount;
+    }
+
+    const boxesUsedToday = opened.length + 1;
+    const tx: TxRecord = {
+      id: `tx_${Date.now()}_box`,
+      userId,
+      asset: boxConfig.rewardAsset,
+      amount: boxConfig.rewardAmount,
+      direction: 'IN',
+      source: 'GIFT_BOX_REWARD',
+      status: 'COMPLETED',
+      timestamp: Date.now(),
+      note: `${boxConfig.name} Opened (+${boxConfig.rewardAmount} ${boxConfig.rewardAsset}) [${boxesUsedToday}/${maxBoxes}]`,
+    };
+    await recordTransaction(tx);
+    await setSupabaseBalance(userId, userBalance).catch(() => {});
+    scheduleSaveDatabase();
+
+    return res.json({
+      success: true,
+      box: { ...boxConfig, isOpened: true },
+      rewardAmount: boxConfig.rewardAmount,
+      rewardAsset: boxConfig.rewardAsset,
+      balances: userBalance,
+      boxesRemainingToday: Math.max(0, maxBoxes - boxesUsedToday),
+      boxesUsedToday,
+      maxDailyBoxes: maxBoxes,
+    });
+  } catch (err: any) {
+    return adStoreFail(res, err);
   }
-
-  const activeBoxConfigs = systemSettings.giftBoxesConfig && systemSettings.giftBoxesConfig.length > 0
-    ? systemSettings.giftBoxesConfig
-    : defaultGiftBoxesConfig;
-
-  const boxConfig = activeBoxConfigs.find(b => b.id === numBoxId) || activeBoxConfigs[numBoxId - 1] || {
-    id: numBoxId,
-    boxNumber: numBoxId,
-    name: `Mystery Box #${numBoxId}`,
-    rewardAsset: 'E4F' as const,
-    rewardAmount: 2.5,
-  };
-
-  dailyOpen.count += 1;
-  dailyOpen.openedBoxIds.push(numBoxId);
-
-  // Update in userGiftBoxes cache
-  const cachedBoxes = userGiftBoxes.get(userId);
-  if (cachedBoxes) {
-    const b = cachedBoxes.find(x => x.id === numBoxId);
-    if (b) b.isOpened = true;
-  }
-
-  if (boxConfig.rewardAsset === 'USDT') {
-    userBalance.usdt += boxConfig.rewardAmount;
-  } else {
-    userBalance.e4f += boxConfig.rewardAmount;
-  }
-
-  const tx: TxRecord = {
-    id: `tx_${Date.now()}_box`,
-    userId,
-    asset: boxConfig.rewardAsset,
-    amount: boxConfig.rewardAmount,
-    direction: 'IN',
-    source: 'GIFT_BOX_REWARD',
-    status: 'COMPLETED',
-    timestamp: Date.now(),
-    note: `${boxConfig.name} Opened (+${boxConfig.rewardAmount} ${boxConfig.rewardAsset}) [${dailyOpen.count}/${maxBoxes}]`,
-  };
-  await recordTransaction(tx);
-  await setSupabaseBalance(userId, userBalance).catch(() => {});
-  scheduleSaveDatabase();
-
-  res.json({
-    success: true,
-    box: { ...boxConfig, isOpened: true },
-    rewardAmount: boxConfig.rewardAmount,
-    rewardAsset: boxConfig.rewardAsset,
-    balances: userBalance,
-    boxesRemainingToday: Math.max(0, maxBoxes - dailyOpen.count),
-    boxesUsedToday: dailyOpen.count,
-    maxDailyBoxes: maxBoxes,
-  });
 });
 
 // 5. Tasks API (/api/tasks)
-app.get('/api/tasks/:userId', (req: Request, res: Response) => {
+// ---------------------------------------------------------------------
+// Persistent admin content (notices + tasks). Vercel serverless keeps no
+// memory between requests, so admin-created notices/tasks are stored in
+// Supabase (table e4f_content) and loaded into the arrays on each request.
+// ---------------------------------------------------------------------
+let contentLoadedAt = 0;
+async function loadAdminContent(force = false) {
+  if (!supabase) return;
+  if (!force && Date.now() - contentLoadedAt < 4000) return;
+  try {
+    const { data, error } = await supabase.from('e4f_content').select('key,value').in('key', ['announcements', 'dynamic_tasks', 'task_queue']);
+    if (error) return;
+    for (const row of data || []) {
+      if (!Array.isArray(row.value)) continue;
+      if (row.key === 'announcements') { announcements.splice(0, announcements.length, ...row.value); }
+      if (row.key === 'dynamic_tasks') { dynamicTasks.splice(0, dynamicTasks.length, ...row.value); }
+      if (row.key === 'task_queue') { taskSubmissionsQueue.splice(0, taskSubmissionsQueue.length, ...row.value); }
+    }
+    contentLoadedAt = Date.now();
+  } catch {}
+}
+async function saveAdminContent() {
+  if (!supabase) return;
+  try {
+    const now = new Date().toISOString();
+    await supabase.from('e4f_content').upsert([
+      { key: 'announcements', value: announcements, updated_at: now },
+      { key: 'dynamic_tasks', value: dynamicTasks, updated_at: now },
+      { key: 'task_queue', value: taskSubmissionsQueue.slice(0, 500), updated_at: now },
+    ], { onConflict: 'key' });
+    contentLoadedAt = Date.now();
+  } catch (e) { console.error('[content] save failed', e); }
+}
+// One-time task reward guard (durable): PK (user_id, task_id) in e4f_task_claims.
+async function claimTaskOnce(userId: string, taskId: string): Promise<boolean> {
+  if (!supabase) return !isProduction;
+  const { error } = await supabase.from('e4f_task_claims').insert({ user_id: userId, task_id: taskId });
+  if (!error) return true;
+  if ((error as any).code === '23505') return false;
+  throw new Error('task-claim-store: ' + error.message);
+}
+// Rebuild this user's task statuses from the database (works on any serverless instance).
+async function hydrateUserTasks(userId: string) {
+  if (!supabase) return;
+  try {
+    const list: Array<{ taskId: string; status: string; proof?: string; timestamp: number }> = [];
+    const { data } = await supabase.from('e4f_task_claims').select('task_id,claimed_at').eq('user_id', userId);
+    for (const r of data || []) list.push({ taskId: r.task_id, status: 'APPROVED', timestamp: Date.parse(r.claimed_at) || Date.now() });
+    for (const q of taskSubmissionsQueue) {
+      if (q.userId !== userId || list.some(x => x.taskId === q.taskId)) continue;
+      list.push({ taskId: q.taskId, status: q.status, proof: q.proof, timestamp: q.timestamp });
+    }
+    userTaskSubmissions.set(userId, list);
+  } catch {}
+}
+app.use(['/api/announcements', '/api/tasks', '/api/admin/announcements', '/api/admin/tasks', '/api/admin/task-submissions'], async (req: Request, res: Response, next: NextFunction) => {
+  await loadAdminContent(req.method !== 'GET');
+  if (req.method !== 'GET' && req.method !== 'OPTIONS' && req.path.length >= 0 && (req.originalUrl.startsWith('/api/admin/') || req.originalUrl.startsWith('/api/tasks/submit'))) {
+    res.on('finish', () => { if (res.statusCode < 400) saveAdminContent(); });
+  }
+  next();
+});
+
+app.get('/api/tasks/:userId', requireUserAuth, async (req: Request, res: Response) => {
   const { userId } = req.params;
+  await hydrateUserTasks(userId);
   const userSubs = userTaskSubmissions.get(userId) || [];
 
   const tasksWithStatus = dynamicTasks.map(t => {
@@ -4306,8 +4005,9 @@ app.get('/api/tasks/:userId', (req: Request, res: Response) => {
 });
 
 // Start Website / Video Task Timer
-app.post('/api/tasks/start-timer', (req: Request, res: Response) => {
+app.post('/api/tasks/start-timer', requireUserAuth, (req: Request, res: Response) => {
   const { userId, taskId, accumulatedSeconds } = req.body;
+  const timerOwner = String((req as any).verifiedUserId || userId);
   const task = dynamicTasks.find(t => t.id === taskId);
   if (!task) return res.status(404).json({ success: false, error: 'Task not found' });
   if (task.verificationMethod !== 'TIMER' && (!task.durationSeconds || task.durationSeconds <= 0)) {
@@ -4327,8 +4027,14 @@ app.post('/api/tasks/start-timer', (req: Request, res: Response) => {
     durationSeconds,
   });
 
+  // Stateless proof of when the task was FIRST opened (survives serverless instance changes)
+  const prevTimer = adVerify('timer', req.body?.timerToken);
+  const firstStart = prevTimer && prevTimer.uid === timerOwner && prevTimer.tid === taskId ? Number(prevTimer.fs) : Date.now();
+  const timerToken = adSign('timer', { uid: timerOwner, tid: taskId, fs: firstStart });
+
   res.json({
     success: true,
+    timerToken,
     startTime: Date.now(),
     durationSeconds,
     accumulatedSeconds: acc,
@@ -4337,7 +4043,7 @@ app.post('/api/tasks/start-timer', (req: Request, res: Response) => {
 });
 
 // Verify Website / Video Task Timer
-app.post('/api/tasks/verify-timer', async (req: Request, res: Response) => {
+app.post('/api/tasks/verify-timer', requireUserAuth, async (req: Request, res: Response) => {
   const { userId, taskId, accumulatedSeconds } = req.body;
   const user = await getUserFromSupabase(userId);
   const userBalance = await getSupabaseBalance(userId);
@@ -4347,30 +4053,31 @@ app.post('/api/tasks/verify-timer', async (req: Request, res: Response) => {
   if (!task) return res.status(404).json({ success: false, error: 'Task not found' });
 
   const timerKey = `${userId}_${taskId}`;
-  const timer = activeTaskTimers.get(timerKey);
-
   const requiredSeconds = Math.max(5, task.durationSeconds || 30);
-  const clientAcc = typeof accumulatedSeconds === 'number' && !isNaN(accumulatedSeconds) ? accumulatedSeconds : 0;
-
-  let totalElapsed = clientAcc;
-  if (timer) {
-    const burst = Math.max(0, (Date.now() - timer.startTime) / 1000);
-    totalElapsed = Math.max(clientAcc, (timer.accumulatedSeconds || 0) + burst);
+  const tt = adVerify('timer', req.body?.timerToken);
+  if (!tt || tt.uid !== String((req as any).verifiedUserId || userId) || tt.tid !== taskId) {
+    return res.status(400).json({ success: false, error: 'Start the task first, then wait for the timer to finish.', remainingSeconds: requiredSeconds });
   }
-
-  // Allow smooth verification with reasonable tolerance
-  if (totalElapsed < requiredSeconds - 4 && clientAcc < requiredSeconds - 4 && (!timer || (Date.now() - timer.startTime) < (requiredSeconds - 4) * 1000)) {
-    const remaining = Math.max(1, Math.ceil(requiredSeconds - Math.max(totalElapsed, clientAcc)));
+  const waitedSeconds = (Date.now() - Number(tt.fs)) / 1000;
+  if (waitedSeconds < requiredSeconds - 1) {
+    const remaining = Math.max(1, Math.ceil(requiredSeconds - waitedSeconds));
     return res.status(400).json({
       success: false,
       error: `Visit verification incomplete. Full ${requiredSeconds}s required. (${remaining}s remaining)`,
       remainingSeconds: remaining,
-      accumulatedSeconds: Math.floor(Math.max(totalElapsed, clientAcc)),
+      accumulatedSeconds: Math.floor(waitedSeconds),
     });
   }
 
   // Timer verified!
   activeTaskTimers.delete(timerKey);
+
+  await hydrateUserTasks(userId);
+  try {
+    if (!(await claimTaskOnce(userId, taskId))) {
+      return res.status(400).json({ success: false, error: 'Task already completed and rewarded' });
+    }
+  } catch (e) { return res.status(503).json({ success: false, error: 'Temporary storage error. Please try again.' }); }
 
   let userSubs = userTaskSubmissions.get(userId);
   if (!userSubs) {
@@ -4419,7 +4126,7 @@ app.post('/api/tasks/verify-timer', async (req: Request, res: Response) => {
   });
 });
 
-app.post('/api/tasks/submit', async (req: Request, res: Response) => {
+app.post('/api/tasks/submit', requireUserAuth, async (req: Request, res: Response) => {
   const { userId, taskId, proof, usernameOrLink, screenshot, description } = req.body;
   const user = await getUserFromSupabase(userId);
   const userBalance = await getSupabaseBalance(userId);
@@ -4428,6 +4135,7 @@ app.post('/api/tasks/submit', async (req: Request, res: Response) => {
   const task = dynamicTasks.find(t => t.id === taskId);
   if (!task) return res.status(404).json({ success: false, error: 'Task not found' });
 
+  await hydrateUserTasks(userId);
   let userSubs = userTaskSubmissions.get(userId);
   if (!userSubs) {
     userSubs = [];
@@ -4438,11 +4146,19 @@ app.post('/api/tasks/submit', async (req: Request, res: Response) => {
   if (existing && existing.status === 'APPROVED') {
     return res.status(400).json({ success: false, error: 'Task already completed and rewarded' });
   }
+  if (existing && existing.status === 'SUBMITTED') {
+    return res.status(400).json({ success: false, error: 'Your proof is already waiting for admin review.' });
+  }
 
   const primaryProof = String(usernameOrLink || proof || '').trim();
 
   // Auto-verify AUTO tasks; MANUAL tasks placed into Admin Review Queue
   if (task.verificationMethod === 'AUTO') {
+    try {
+      if (!(await claimTaskOnce(userId, taskId))) {
+        return res.status(400).json({ success: false, error: 'Task already completed and rewarded' });
+      }
+    } catch (e) { return res.status(503).json({ success: false, error: 'Temporary storage error. Please try again.' }); }
     if (existing) {
       existing.status = 'APPROVED';
     } else {
@@ -4503,7 +4219,7 @@ app.post('/api/tasks/submit', async (req: Request, res: Response) => {
 });
 
 // 6. Referral API (/api/referrals)
-app.get('/api/referrals/:userId', async (req: Request, res: Response) => {
+app.get('/api/referrals/:userId', requireUserAuth, async (req: Request, res: Response) => {
   const { userId } = req.params;
   const user = await getUserFromSupabase(userId);
   if (!user) return res.status(404).json({ success: false, error: 'User not found' });
@@ -4755,7 +4471,7 @@ app.get('/api/market/orderbook', (req: Request, res: Response) => {
 });
 
 // 8. Spot Trading Engine (/api/trade/order)
-app.post('/api/trade/order', async (req: Request, res: Response) => {
+app.post('/api/trade/order', requireUserAuth, async (req: Request, res: Response) => {
   const { userId, pair, side, type, price, amount } = req.body;
   if (pair.startsWith('E4F')) {
     return res.status(400).json({ success: false, error: 'E4F is not listed yet. Trading unavailable.' });
@@ -4860,7 +4576,7 @@ app.post('/api/trade/order', async (req: Request, res: Response) => {
   });
 });
 
-app.get('/api/trade/:userId/orders', async (req: Request, res: Response) => {
+app.get('/api/trade/:userId/orders', requireUserAuth, async (req: Request, res: Response) => {
   const { userId } = req.params;
   const cutoff = Date.now() - NINETY_DAYS_MS;
   const inMemory = spotOrders.filter(o => o.userId === userId && o.timestamp >= cutoff);
@@ -5199,6 +4915,9 @@ app.post('/api/wallet/deposit', requireUserAuth, async (req: Request, res: Respo
 
 const handleWithdrawRequest = async (req: Request, res: Response) => {
   const { userId, asset, address, network, amount } = req.body;
+  if (await isUserSuspended(String((req as any).verifiedUserId || userId))) {
+    return res.status(403).json({ success: false, error: 'Your account is suspended.' });
+  }
   if (asset === 'E4F') {
     return res.status(400).json({ success: false, error: 'E4F is not listed yet. Withdrawals not available.' });
   }
@@ -5368,7 +5087,7 @@ app.post('/api/withdraw', requireUserAuth, handleWithdrawRequest);
 
 // 3. User Withdrawals History Route (Directly from Supabase table 'withdrawals')
 // 3. User Withdrawals History Route: Filtered to last 90 days for user app (.gte created_at)
-app.get('/api/withdrawals/:userId', async (req: Request, res: Response) => {
+app.get('/api/withdrawals/:userId', requireUserAuth, async (req: Request, res: Response) => {
   const { userId } = req.params;
   const ninetyDaysAgoMs = Date.now() - 90 * 24 * 60 * 60 * 1000;
   const ninetyDaysAgoISO = new Date(ninetyDaysAgoMs).toISOString();
@@ -5411,7 +5130,7 @@ app.get('/api/announcements', (_req: Request, res: Response) => {
   res.json({ announcements: announcements.filter(a => a.isActive) });
 });
 
-app.get('/api/support/:userId/tickets', (req: Request, res: Response) => {
+app.get('/api/support/:userId/tickets', requireUserAuth, (req: Request, res: Response) => {
   const { userId } = req.params;
   res.json({ tickets: supportTickets.filter(t => t.userId === userId) });
 });
@@ -5430,44 +5149,24 @@ app.post('/api/support/create', (req: Request, res: Response) => {
   res.json({ success: true, ticket });
 });
 
-const ADMIN_SECRET = process.env.ADMIN_SECRET || process.env.ADMIN_PASSWORD || 'E4F_DevAdmin_Secret_2028';
-const ADMIN_PASSWORD_HASH = '999f924991984542503ea3f5ad710034eef34a7467340ee1b67cc187c19be637';
-const SESSION_SECRET = process.env.SESSION_SECRET || ADMIN_SECRET || 'e4f_session_signing_secret_key';
+// The admin password lives ONLY in the server environment variable ADMIN_SECRET.
+// It is never written in source code, never sent to the browser, and there are no fallback passwords.
+const ADMIN_SECRET: string = (process.env.ADMIN_SECRET || process.env.ADMIN_PASSWORD || '').trim();
+const SESSION_SECRET: string = SESSION_SECRET_KEY;
+if (!ADMIN_SECRET) {
+  console.error('[SECURITY] ADMIN_SECRET is not set. Admin login is DISABLED until you set it in the server environment.');
+}
+
+function safeEqual(a: string, b: string): boolean {
+  const ha = crypto.createHash('sha256').update(a).digest();
+  const hb = crypto.createHash('sha256').update(b).digest();
+  return crypto.timingSafeEqual(ha, hb);
+}
 
 function verifyAdminPassword(candidate: string): boolean {
+  if (!ADMIN_SECRET) return false;
   if (!candidate || typeof candidate !== 'string') return false;
-  const trimmed = candidate.trim();
-  if (process.env.ADMIN_SECRET && trimmed === process.env.ADMIN_SECRET) return true;
-  if (process.env.ADMIN_PASSWORD && trimmed === process.env.ADMIN_PASSWORD) return true;
-  if (ADMIN_SECRET && trimmed === ADMIN_SECRET) return true;
-
-  // Standard Administrator Master Passkeys
-  const STANDARD_PASSWORDS = [
-    'E4F_DevAdmin_Secret_2028',
-    'admin',
-    'admin123',
-    '8827675419',
-    'E4F2028',
-    'e4f2028',
-    'Admin@2028',
-    'E4F_Admin_2028',
-    'aminulislamrifat470@gmail.com',
-  ];
-  if (STANDARD_PASSWORDS.includes(trimmed)) return true;
-
-  const h = crypto.createHash('sha256').update(trimmed).digest('hex');
-  if (h === ADMIN_PASSWORD_HASH) return true;
-
-  // Handle URL decoded query string where '+' was converted to space
-  const withPlus = trimmed.replace(/\s+/g, '+');
-  if (crypto.createHash('sha256').update(withPlus).digest('hex') === ADMIN_PASSWORD_HASH) return true;
-
-  // Handle unquoted input
-  const unquoted = trimmed.replace(/^["']|["']$/g, '');
-  if (crypto.createHash('sha256').update(unquoted).digest('hex') === ADMIN_PASSWORD_HASH) return true;
-  if (crypto.createHash('sha256').update(unquoted.replace(/\s+/g, '+')).digest('hex') === ADMIN_PASSWORD_HASH) return true;
-
-  return false;
+  return safeEqual(candidate.trim(), ADMIN_SECRET);
 }
 
 function generateAdminSessionToken(): string {
@@ -5496,76 +5195,69 @@ function verifyAdminSessionToken(token: string): boolean {
 }
 
 function requireAdminAuth(req: Request, res: Response, next: () => void) {
-  const adminKey = ((req.headers['x-admin-key'] as string) || (req.query.adminKey as string) || (req.query.key as string) || '').trim();
-  const adminToken = ((req.headers['x-admin-token'] as string) || (req.query.adminToken as string) || (req.query.token as string) || '').trim();
-  const tgIdHeader = String(req.headers['x-telegram-id'] || req.query.telegramId || '').trim();
+  // Credentials are accepted ONLY from headers (never from the URL, which ends up in logs).
+  const adminKey = ((req.headers['x-admin-key'] as string) || '').trim();
+  const adminToken = ((req.headers['x-admin-token'] as string) || '').trim();
 
-  // Allow verified administrator Telegram ID directly from Telegram WebApp
-  if (tgIdHeader === '8827675419') {
-    return next();
+  if (adminToken && verifyAdminSessionToken(adminToken)) return next();
+
+  if (adminKey) {
+    const ip = String(req.headers['x-forwarded-for'] || req.socket.remoteAddress || 'ip').split(',')[0].trim();
+    if (adRateLimited(`adminkey|${ip}`, 30, 10 * 60_000)) {
+      return res.status(429).json({ success: false, error: 'Too many attempts. Try again later.' });
+    }
+    if (verifyAdminPassword(adminKey)) return next();
   }
 
-  // Check valid signed token first
-  if (adminToken && verifyAdminSessionToken(adminToken)) {
-    return next();
-  }
-
-  // Check valid admin key or password
-  if (adminKey && verifyAdminPassword(adminKey)) {
-    return next();
-  }
-
-  return res.status(401).json({ success: false, error: 'Unauthorized: Valid Admin authentication token or secret key required.' });
+  return res.status(401).json({ success: false, error: 'Unauthorized: Valid Admin authentication required.' });
 }
 
 const handleAdminLogin = (req: Request, res: Response) => {
   if (req.method !== 'POST') {
     return res.status(405).json({ success: false, error: 'Method Not Allowed. Admin login requires POST with JSON body.' });
   }
-
-  let body = req.body;
-  let parsedFromText = '';
-  if (typeof body === 'string') {
-    parsedFromText = body.trim();
-    try {
-      const parsed = JSON.parse(body);
-      if (parsed && typeof parsed === 'object') body = parsed;
-    } catch {}
-  } else if (Buffer.isBuffer(body)) {
-    try {
-      const str = body.toString('utf8');
-      parsedFromText = str.trim();
-      const parsed = JSON.parse(str);
-      if (parsed && typeof parsed === 'object') body = parsed;
-    } catch {}
+  if (!ADMIN_SECRET) {
+    return res.status(503).json({ success: false, error: 'Admin login is not configured on the server (ADMIN_SECRET missing).' });
   }
 
-  const rawInput =
-    (typeof body === 'object' && body !== null ? (body.password || body.key || body.pin || body.adminPassword || body.secret || body.admin_secret) : '') ||
-    parsedFromText ||
-    req.headers['x-admin-key'] ||
-    req.headers['x-admin-password'] ||
-    req.headers['x-admin-secret'] ||
-    '';
-  const input = typeof rawInput === 'string' ? rawInput.trim() : String(rawInput).trim();
-  const tgId = (typeof body === 'object' && body !== null ? (body.telegramId || body.telegram_id || body.tgId) : '') ||
-    req.headers['x-telegram-id'] || '';
+  const ip = String(req.headers['x-forwarded-for'] || req.socket.remoteAddress || 'ip').split(',')[0].trim();
+  if (adRateLimited(`adminlogin|${ip}`, 8, 10 * 60_000)) {
+    return res.status(429).json({ success: false, error: 'Too many login attempts. Try again in a few minutes.' });
+  }
 
-  if ((input && verifyAdminPassword(input)) || String(tgId).trim() === '8827675419') {
-    const signedToken = generateAdminSessionToken();
+  let body: any = req.body;
+  if (typeof body === 'string') {
+    try { body = JSON.parse(body); } catch { body = {}; }
+  } else if (Buffer.isBuffer(body)) {
+    try { body = JSON.parse(body.toString('utf8')); } catch { body = {}; }
+  }
+  const rawInput = body && typeof body === 'object'
+    ? (body.password || body.key || body.pin || body.adminPassword || body.secret || body.admin_secret || '')
+    : '';
+  const input = typeof rawInput === 'string' ? rawInput.trim() : '';
+
+  if (input && verifyAdminPassword(input)) {
     return res.json({
       success: true,
-      token: signedToken,
+      token: generateAdminSessionToken(),
       role: 'SUPER_ADMIN',
     });
   }
 
+  auditLogs.unshift({
+    id: `audit_${Date.now()}`,
+    adminId: 'UNKNOWN',
+    action: 'ADMIN_LOGIN_FAILED',
+    target: ip,
+    details: 'Failed admin login attempt',
+    timestamp: Date.now(),
+  });
   return res.status(401).json({ success: false, error: 'Invalid Admin Secret Password' });
 };
 
 app.post(['/api/admin/login', '/admin/login', '/api/admin/auth/login', '/admin/auth/login'], handleAdminLogin);
 
-app.get(['/api/admin/dashboard', '/admin/dashboard'], async (_req: Request, res: Response) => {
+app.get(['/api/admin/dashboard', '/admin/dashboard'], requireAdminAuth, async (_req: Request, res: Response) => {
   let totalUsers = users.size;
   let activeUsers = 0;
 
@@ -5789,6 +5481,11 @@ app.post(['/api/admin/settings', '/admin/settings'], requireAdminAuth, async (re
   updates.monetagDirectLink = '';
 
   Object.assign(systemSettings, updates);
+  // Ads can never be switched off and slot networks/ids are always validated
+  systemSettings.rewardedAdRequired = true;
+  systemSettings.rewardSpinAdRequired = true;
+  systemSettings.giftBoxAdRequired = true;
+  normalizeAdSlotSettings();
 
   try {
     fs.writeFileSync(SETTINGS_FILE, JSON.stringify(systemSettings, null, 2), 'utf-8');
@@ -5911,11 +5608,16 @@ app.get('/api/admin/users', requireAdminAuth, async (_req: Request, res: Respons
   res.json({ users: userList });
 });
 
-app.post('/api/admin/users/:userId/status', requireAdminAuth, (req: Request, res: Response) => {
+app.post('/api/admin/users/:userId/status', requireAdminAuth, async (req: Request, res: Response) => {
   const { userId } = req.params;
   const { status } = req.body;
-  const user = users.get(userId);
+  if (!['ACTIVE', 'RESTRICTED', 'SUSPENDED'].includes(status)) return res.status(400).json({ success: false, error: 'Invalid status' });
+  let user: any = users.get(userId) || (await getUserFromSupabase(userId));
   if (!user) return res.status(404).json({ success: false, error: 'User not found' });
+  if (supabase) {
+    try { await supabase.from('users').update({ status }).eq('id', userId); } catch {}
+  }
+  suspendCache.delete(userId);
 
   user.status = status;
   auditLogs.unshift({
@@ -6301,7 +6003,7 @@ app.get('/api/admin/task-submissions', requireAdminAuth, (_req: Request, res: Re
   res.json({ submissions: taskSubmissionsQueue });
 });
 
-app.post('/api/admin/task-submissions/review', requireAdminAuth, (req: Request, res: Response) => {
+app.post('/api/admin/task-submissions/review', requireAdminAuth, async (req: Request, res: Response) => {
   const { submissionId, decision, adminNote } = req.body; // decision: 'APPROVE' | 'REJECT'
   const sub = taskSubmissionsQueue.find(s => s.id === submissionId);
   if (!sub) return res.status(404).json({ success: false, error: 'Submission not found' });
@@ -6311,7 +6013,7 @@ app.post('/api/admin/task-submissions/review', requireAdminAuth, (req: Request, 
   }
 
   const user = users.get(sub.userId);
-  const userBalance = balances.get(sub.userId);
+  const userBalance = decision === 'APPROVE' ? await getSupabaseBalance(sub.userId) : null;
   let userSubs = userTaskSubmissions.get(sub.userId);
   if (!userSubs) {
     userSubs = [];
@@ -6321,6 +6023,12 @@ app.post('/api/admin/task-submissions/review', requireAdminAuth, (req: Request, 
   const existingSub = userSubs.find(s => s.taskId === sub.taskId);
 
   if (decision === 'APPROVE') {
+    try {
+      if (!(await claimTaskOnce(sub.userId, sub.taskId))) {
+        sub.status = 'APPROVED';
+        return res.status(400).json({ success: false, error: 'This task was already rewarded to the user.' });
+      }
+    } catch (e) { return res.status(503).json({ success: false, error: 'Temporary storage error. Please try again.' }); }
     sub.status = 'APPROVED';
     sub.adminNote = adminNote || 'Approved by Administrator';
 
@@ -6541,9 +6249,6 @@ app.post('/api/admin/deposits/:id/review', requireAdminAuth, async (req: Request
       userBalance.usdt = Number(((userBalance.usdt || 0) + tx.amount).toFixed(6));
       if (user) {
         user.depositBalance = Number(((user.depositBalance || 0) + tx.amount).toFixed(6));
-        if (user.depositBalance >= 10.0) {
-          user.isVerified = true;
-        }
       }
     } else {
       const assetKey = tx.asset.toLowerCase() as keyof BalanceRecord;

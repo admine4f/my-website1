@@ -209,32 +209,8 @@ export const AdminControlModal: React.FC<AdminControlModalProps> = ({ onClose })
   // Retention cleanup status
   const [cleaningRetention, setCleaningRetention] = useState(false);
 
-  // Auto-restore admin session if token exists or if user is verified Telegram admin (8827675419)
+  // Auto-restore admin session only if a still-valid signed admin token exists (password is always required otherwise)
   useEffect(() => {
-    const isTgAdmin =
-      user?.telegramId === 8827675419 ||
-      String(user?.telegramId) === '8827675419' ||
-      (typeof window !== 'undefined' && Number((window as any).Telegram?.WebApp?.initDataUnsafe?.user?.id) === 8827675419);
-
-    if (isTgAdmin && !isAuthenticated) {
-      setAuthenticating(true);
-      api.adminLogin('8827675419')
-        .then(res => {
-          if (res.success) {
-            setIsAuthenticated(true);
-            if (res.token) {
-              try { localStorage.setItem('e4f_admin_token', res.token); } catch {}
-            }
-            loadAdminData();
-          }
-        })
-        .catch(() => {})
-        .finally(() => {
-          setAuthenticating(false);
-        });
-      return;
-    }
-
     const existingToken = typeof window !== 'undefined' ? localStorage.getItem('e4f_admin_token') : null;
     if (existingToken && !isAuthenticated) {
       setAuthenticating(true);
@@ -481,12 +457,12 @@ export const AdminControlModal: React.FC<AdminControlModalProps> = ({ onClose })
         spin_01_richads: cleanAdId(spin01Richads, '410203'),
         spin_02_monetag: cleanAdId(spin02Monetag, '12044377'),
         spin_03_onclicka: cleanAdId(spin03Onclicka, '6153717E4F'),
-        spin_04_richads: cleanAdId(spin04Richads, '12823'),
+        spin_04_richads: cleanAdId(spin04Richads, '12044377'),
         spin_05_monetag: cleanAdId(spin05Monetag, '12044377'),
         box_01_richads: cleanAdId(box01Richads, '410202'),
         box_02_monetag: cleanAdId(box02Monetag, '12044377'),
         box_03_onclicka: cleanAdId(box03Onclicka, '6153772E4F'),
-        box_04_richads: cleanAdId(box04Richads, '12823'),
+        box_04_richads: cleanAdId(box04Richads, '12044377'),
         box_05_monetag: cleanAdId(box05Monetag, '12044377'),
         // Mining Waterfall Gate Settings
         miningPrimaryNetwork,
@@ -495,7 +471,7 @@ export const AdminControlModal: React.FC<AdminControlModalProps> = ({ onClose })
         mining_01_richads: cleanAdId(mining01Richads, '410204'),
         mining_02_monetag: cleanAdId(mining02Monetag, '12044377'),
         mining_03_onclicka: cleanAdId(mining03Onclicka, '6153774E4F'),
-        mining_04_richads: cleanAdId(mining04Richads, '12823'),
+        mining_04_richads: cleanAdId(mining04Richads, '410204'),
         mining_05_monetag: cleanAdId(mining05Monetag, '12044377'),
         miningRatePerHour: Number(miningRatePerHour),
       }, adminKey);
@@ -508,17 +484,17 @@ export const AdminControlModal: React.FC<AdminControlModalProps> = ({ onClose })
             mining_01_richads: cleanAdId(mining01Richads, '410204'),
             mining_02_monetag: cleanAdId(mining02Monetag, '12044377'),
             mining_03_onclicka: cleanAdId(mining03Onclicka, '6153774E4F'),
-            mining_04_richads: cleanAdId(mining04Richads, '12823'),
+            mining_04_richads: cleanAdId(mining04Richads, '410204'),
             mining_05_monetag: cleanAdId(mining05Monetag, '12044377'),
             spin_01_richads: cleanAdId(spin01Richads, '410203'),
             spin_02_monetag: cleanAdId(spin02Monetag, '12044377'),
             spin_03_onclicka: cleanAdId(spin03Onclicka, '6153717E4F'),
-            spin_04_richads: cleanAdId(spin04Richads, '12823'),
+            spin_04_richads: cleanAdId(spin04Richads, '12044377'),
             spin_05_monetag: cleanAdId(spin05Monetag, '12044377'),
             box_01_richads: cleanAdId(box01Richads, '410202'),
             box_02_monetag: cleanAdId(box02Monetag, '12044377'),
             box_03_onclicka: cleanAdId(box03Onclicka, '6153772E4F'),
-            box_04_richads: cleanAdId(box04Richads, '12823'),
+            box_04_richads: cleanAdId(box04Richads, '12044377'),
             box_05_monetag: cleanAdId(box05Monetag, '12044377'),
             miningAdDuration: Number(adDuration),
             spinAdDuration: Number(spinAdDuration),
@@ -1299,13 +1275,13 @@ export const AdminControlModal: React.FC<AdminControlModalProps> = ({ onClose })
                         </div>
                         <div>
                           <label className="text-[10px] text-slate-400 font-semibold block mb-0.5">
-                            4. RichAds / TADS Zone ID (mining_04_richads)
+                            4. RichAds Zone ID (mining_04_richads)
                           </label>
                           <input
                             type="text"
                             value={mining04Richads}
                             onChange={e => setMining04Richads(e.target.value)}
-                            placeholder="e.g. 12823 (TADS) or 410204 (RichAds)"
+                            placeholder="e.g. 410204 (RichAds)"
                             className="w-full px-2.5 py-1.5 rounded-lg bg-slate-900 border border-slate-700 text-xs text-white font-mono"
                           />
                         </div>
@@ -1463,13 +1439,13 @@ export const AdminControlModal: React.FC<AdminControlModalProps> = ({ onClose })
                         </div>
                         <div>
                           <label className="text-[10px] text-slate-400 font-semibold block mb-0.5">
-                            4. RichAds / TADS ID (spin_04_richads)
+                            4. Monetag ID (spin_04_richads)
                           </label>
                           <input
                             type="text"
                             value={spin04Richads}
                             onChange={e => setSpin04Richads(e.target.value)}
-                            placeholder="e.g. 12823 (TADS) or 410203 (RichAds)"
+                            placeholder="e.g. 12044377 (Monetag)"
                             className="w-full px-2.5 py-1.5 rounded-lg bg-slate-900 border border-slate-700 text-xs text-white font-mono"
                           />
                         </div>
@@ -1575,13 +1551,13 @@ export const AdminControlModal: React.FC<AdminControlModalProps> = ({ onClose })
                         </div>
                         <div>
                           <label className="text-[10px] text-slate-400 font-semibold block mb-0.5">
-                            Box #4 RichAds / TADS ID (box_04_richads)
+                            Box #4 Monetag ID (box_04_richads)
                           </label>
                           <input
                             type="text"
                             value={box04Richads}
                             onChange={e => setBox04Richads(e.target.value)}
-                            placeholder="e.g. 12823 (TADS) or 410202 (RichAds)"
+                            placeholder="e.g. 12044377 (Monetag)"
                             className="w-full px-2.5 py-1.5 rounded-lg bg-slate-900 border border-slate-700 text-xs text-white font-mono"
                           />
                         </div>
@@ -2230,7 +2206,7 @@ export const AdminControlModal: React.FC<AdminControlModalProps> = ({ onClose })
                         </span>
                       </div>
                       <span className="text-[10px] text-slate-400 block">
-                        Awarded on user's first qualifying deposit & returned upon account verification. Set custom 2, 3, 4 or whatever desired.
+                        Awarded on user's first qualifying deposit. Set custom 2, 3, 4 or whatever desired.
                       </span>
                     </div>
 
