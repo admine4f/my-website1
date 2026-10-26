@@ -3,9 +3,7 @@ import { Pickaxe, Clock, AlertCircle, CheckCircle2, History, Calendar, Shield, P
 import { useApp } from '../../context/AppContext';
 import { MiningCoin3D } from './MiningCoin3D';
 import { UnifiedRewardedAdModal } from '../rewards/UnifiedRewardedAdModal';
-import { handleMiningWithWaterfall } from '../../services/antiFakeAds';
 import { api } from '../../services/api';
-import { showTadsAd, getAdId } from '../common/AdGate';
 
 export const MiningView: React.FC = () => {
   const { user, balances, activeMiningSession, miningStats, refreshMining, refreshProfile, addToast } = useApp();
@@ -106,28 +104,7 @@ export const MiningView: React.FC = () => {
   const handleStartMiningPress = async () => {
     if (!user) return;
 
-    // Check freshest status from server dynamically without app update
-    let isAdReq = miningStats?.adRequired ?? true;
-    try {
-      const pub = await api.getPublicSettings();
-      if (pub && pub.rewardedAdRequired !== undefined) {
-        isAdReq = pub.rewardedAdRequired;
-      }
-    } catch {}
-
-    // Check if Mining Ad is ON or OFF in admin control panel
-    if (!isAdReq) {
-      executeStartMining();
-      return;
-    }
-
-    // Slot #4 TADS check: if set to 12823, show TADS ad inside Telegram
-    const mining04 = getAdId('mining_04');
-    if (mining04 === '12823') {
-      showTadsAd('mining', null, () => executeStartMining());
-      return;
-    }
-
+    // A finished rewarded ad is always required to start mining (enforced by the server).
     // Open 100% In-App Mining Waterfall Ad Modal inside Telegram
     setShowAdModal(true);
   };

@@ -3,11 +3,23 @@ import { X, Play, CheckCircle2, ShieldCheck } from 'lucide-react';
 import { useApp } from '../../context/AppContext';
 import { api } from '../../services/api';
 import { UnifiedRewardedAdModal } from './UnifiedRewardedAdModal';
-import { showTadsAd, getAdId } from '../common/AdGate';
 
 interface SpinWheelModalProps {
   onClose: () => void;
 }
+
+// Daily spin count saved in localStorage by UTC date (the server stays the authoritative counter)
+const utcDayKey = () => new Date().toISOString().slice(0, 10);
+const spinCountKey = (uid: string) => `E4F_spin_count_${uid}`;
+const readLocalSpinCount = (uid: string): number => {
+  try {
+    const v = JSON.parse(localStorage.getItem(spinCountKey(uid)) || 'null');
+    return v && v.date === utcDayKey() ? Number(v.count) || 0 : 0;
+  } catch { return 0; }
+};
+const bumpLocalSpinCount = (uid: string) => {
+  try { localStorage.setItem(spinCountKey(uid), JSON.stringify({ date: utcDayKey(), count: readLocalSpinCount(uid) + 1 })); } catch {}
+};
 
 export const SpinWheelModal: React.FC<SpinWheelModalProps> = ({ onClose }) => {
   const { user, refreshProfile, addToast } = useApp();
@@ -58,18 +70,12 @@ export const SpinWheelModal: React.FC<SpinWheelModalProps> = ({ onClose }) => {
   const handleInitiateSpin = async () => {
     if (!user || spinning) return;
     const remaining = spinStatus?.spinsRemainingToday ?? 5;
-    if (remaining <= 0) {
+    if (remaining <= 0 || readLocalSpinCount(user.id) >= (spinStatus?.maxSpins || 5)) {
       addToast('Daily Limit Reached', 'You have used all 5 spins for today. Resets tomorrow at 00:00 UTC.', 'info');
       return;
     }
 
     if (spinStatus?.adRequired !== false) {
-      // Slot #4 TADS check: if set to 12823, show TADS ad inside Telegram
-      const spin04 = getAdId('spin_04');
-      if (spin04 === '12823') {
-        showTadsAd('spin', null, () => executeSpin());
-        return;
-      }
       setShowAdModal(true);
     } else {
       executeSpin();
@@ -98,6 +104,7 @@ export const SpinWheelModal: React.FC<SpinWheelModalProps> = ({ onClose }) => {
       setTimeout(() => {
         setSpinning(false);
         setWonPrize(res.prize);
+        bumpLocalSpinCount(user.id);
         addToast('Spin Reward!', `Won ${res.prize.label}! Credited to your wallet.`, 'success');
         api.getSpinStatus(user.id).then(setSpinStatus).catch(() => {});
         refreshProfile();

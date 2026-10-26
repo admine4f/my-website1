@@ -35,7 +35,7 @@ export const ReferralModal: React.FC<ReferralModalProps> = ({ onClose }) => {
       .catch(() => {});
 
     if (user?.id) {
-      fetch(`/api/referrals/${user.id}`)
+      fetch(`/api/referrals/${user.id}`, { headers: api.getUserAuthHeaders() })
         .then(res => res.json())
         .then(data => {
           if (data) {

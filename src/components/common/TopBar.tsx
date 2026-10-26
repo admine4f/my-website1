@@ -6,21 +6,22 @@ export const TopBar: React.FC = () => {
   const { openModal, notifications } = useApp();
   const unreadCount = notifications.filter(n => !n.read).length;
 
-  // Secret Admin Access via 5 taps on Logo within 3 seconds
+  // Secret Admin Access: 15 taps on the logo within 3 seconds (window starts at the first tap)
   const tapCountRef = useRef<number>(0);
-  const tapTimerRef = useRef<any>(null);
+  const tapStartRef = useRef<number>(0);
 
   const handleLogoTap = () => {
-    tapCountRef.current += 1;
-    if (tapTimerRef.current) clearTimeout(tapTimerRef.current);
-    if (tapCountRef.current >= 5) {
+    const now = Date.now();
+    if (!tapStartRef.current || now - tapStartRef.current > 3000) {
+      tapStartRef.current = now;
       tapCountRef.current = 0;
-      openModal('ADMIN');
-      return;
     }
-    tapTimerRef.current = setTimeout(() => {
+    tapCountRef.current += 1;
+    if (tapCountRef.current >= 15) {
       tapCountRef.current = 0;
-    }, 3000);
+      tapStartRef.current = 0;
+      openModal('ADMIN');
+    }
   };
 
   return (

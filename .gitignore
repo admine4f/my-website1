@@ -11,3 +11,6 @@ app-database*.json
 .db_content.json
 .env*
 !.env.example
+
+public/assets/aistudio/
+.aistudio/
