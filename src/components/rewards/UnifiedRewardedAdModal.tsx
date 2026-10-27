@@ -181,6 +181,7 @@ export const UnifiedRewardedAdModal: React.FC<UnifiedRewardedAdModalProps> = ({
   const [miningStep, setMiningStep] = useState<number | null>(null);
   const [initNonce, setInitNonce] = useState<number>(0);
   const watchTicketRef = useRef<string>('');
+  const lastFailRef = useRef<string>('');
 
   // 1. Initialize Waterfall Tiers & Ad Session
   useEffect(() => {
@@ -380,6 +381,7 @@ export const UnifiedRewardedAdModal: React.FC<UnifiedRewardedAdModalProps> = ({
       const showOnce = async (tier: WaterfallTier): Promise<{ ok: boolean; noFill: boolean }> => {
         const t0 = Date.now();
         let ok = false;
+        let whyFailed = '';
         try {
           let r: { success: boolean; reason?: string };
           if (tier.provider === 'RichAds') {
@@ -390,11 +392,14 @@ export const UnifiedRewardedAdModal: React.FC<UnifiedRewardedAdModalProps> = ({
             r = await showOnclickaAd(String(tier.id));
           }
           ok = !!r.success;
-          if (!ok) console.warn(`[Ad] ${tier.provider} (${tier.id}) not completed: ${r.reason || 'unknown'}`);
+          if (!ok) { whyFailed = r.reason || 'unknown'; console.warn(`[Ad] ${tier.provider} (${tier.id}) not completed: ${whyFailed}`); }
         } catch (err: any) {
           console.warn('[Ad] error:', err);
           ok = false;
+          whyFailed = err?.message || 'error';
         }
+        if (!ok) { lastFailRef.current = `${tier.provider} ${tier.id}: ${String(whyFailed).slice(0, 120)}`; setTierFailReason(lastFailRef.current); }
+        else { lastFailRef.current = ''; }
         const ms = Date.now() - t0;
         const noFill = !ok && ms < NO_FILL_MS;
         if (tier.provider === 'Monetag' && (ok || !noFill)) markMonetagShown(); // Monetag was shown -> 59s rest
@@ -491,12 +496,13 @@ export const UnifiedRewardedAdModal: React.FC<UnifiedRewardedAdModalProps> = ({
     }
 
     if (!alive()) return;
-    setTierFailReason(null);
+    setTierFailReason(outcome === 'reward' ? null : (lastFailRef.current || null));
     setStatusNote('');
 
     if (outcome === 'reward' && finalTier) {
       setMiningStep(null);
       // All required ads were really shown -> automatic reward (no waiting time)
+      setStatusNote('AD FINISHED • VERIFYING');
       await serverStartPromise; // make sure the server registered the start before the completion call
       if (!watchTicketRef.current) {
         isVerifyingRef.current = false;
@@ -512,8 +518,8 @@ export const UnifiedRewardedAdModal: React.FC<UnifiedRewardedAdModalProps> = ({
       // Closed midway -> NO reward; the same ad can be started again
       setTierFailReason(
         isMining
-          ? 'Ad closed early - no reward. Tap "Watch Video Ad" to try again.'
-          : 'Ad closed early - no reward. Tap "Watch Video Ad" to try again.'
+          ? `Ad closed early - no reward. Tap "Watch Video Ad" to try again.${lastFailRef.current ? ' (' + lastFailRef.current + ')' : ''}`
+          : `Ad closed early - no reward. Tap "Watch Video Ad" to try again.${lastFailRef.current ? ' (' + lastFailRef.current + ')' : ''}`
       );
       setStep('READY');
     } else {
