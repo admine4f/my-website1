@@ -184,33 +184,57 @@
       }
 
       // Global In-App RichAds Telegram Bridge (never opens an external browser).
-      // Uses ONLY the Interstitial Banner (rewarded, 10s video inside the Mini App) with the default parameter
-      // (false) so the creative is shown INSIDE the app and never jumps straight to an offer page.
-      // Resolves TRUE only when RichAds reports a successful ad interaction; FALSE for not-displayed / error.
+      // RichAds has one SDK but different ad FORMATS, each started by its own method:
+      //   zone 410203 = interstitial VIDEO  -> triggerInterstitialVideo()
+      //   zone 410202 = interstitial BANNER -> triggerInterstitialBanner()
+      //   zone 410204 = playable / any      -> first available method
+      // The right method is tried first; if RichAds has no ad for it, the other formats are tried too.
+      // Resolves TRUE only when RichAds reports a successful ad; FALSE when nothing could be shown.
+      // The exact reason is saved in window.__e4fRichAdsLast so the app can show it on screen.
+      window.__e4fRichAdsLast = '';
       window.showRichAdsInTelegram = function(richadsId) {
         return new Promise(function(resolve) {
           var finished = false;
           function fin(v, why) {
             if (finished) return;
             finished = true;
+            window.__e4fRichAdsLast = v ? '' : String(why || 'not displayed');
             console.log('[RichAds] result =', v, why || '');
             resolve(v);
           }
           try {
             var ctrl = window.TelegramAdsController;
-            if (!ctrl || typeof ctrl.triggerInterstitialBanner !== 'function') {
-              return fin(false, 'controller not ready');
+            if (!ctrl) return fin(false, 'RichAds SDK not loaded (check ad blocker / domain approval)');
+            var id = String(richadsId || '');
+            var order = id === '410203'
+              ? ['triggerInterstitialVideo', 'triggerInterstitialBanner']
+              : id === '410202'
+                ? ['triggerInterstitialBanner', 'triggerInterstitialVideo']
+                : ['triggerPlayable', 'triggerPlayableAd', 'triggerInterstitialVideo', 'triggerInterstitialBanner'];
+            var methods = order.filter(function(m) { return typeof ctrl[m] === 'function'; });
+            if (!methods.length) return fin(false, 'RichAds SDK has no ad method');
+            var lastErr = '';
+            var i = 0;
+            function next() {
+              if (finished) return;
+              if (i >= methods.length) return fin(false, 'no ad available' + (lastErr ? ' (' + lastErr + ')' : ''));
+              var m = methods[i++];
+              try {
+                var r = ctrl[m]();  // exactly as documented: richadsController.triggerInterstitialVideo() / triggerInterstitialBanner()
+                if (r && typeof r.then === 'function') {
+                  r.then(function() { fin(true, m + ' completed'); },
+                         function(err) { lastErr = m + ': ' + (err && (err.message || err) || 'not displayed'); console.warn('[RichAds]', lastErr); next(); });
+                } else {
+                  lastErr = m + ': unexpected sdk response';
+                  next();
+                }
+              } catch (e) { lastErr = m + ': ' + (e && e.message || e); next(); }
             }
-            var r = ctrl.triggerInterstitialBanner(false);
-            if (r && typeof r.then === 'function') {
-              r.then(function() { fin(true, 'ad completed'); }, function(err) { console.warn('[RichAds] not displayed:', err); fin(false, 'not displayed'); });
-            } else {
-              fin(false, 'unexpected sdk response');
-            }
+            next();
             setTimeout(function() { fin(false, 'timeout'); }, 180000);
           } catch (e) {
             console.error('RichAds invoke error:', e);
-            fin(false, 'exception');
+            fin(false, 'exception: ' + (e && e.message || e));
           }
         });
       };
@@ -244,22 +268,36 @@
         return new Promise(function(resolve) {
           var finished = false;
           function fin(v) { if (!finished) { finished = true; resolve(v); } }
-          try {
+          function run(withOpts) {
+            var t0 = Date.now();
             var fn = window.show_12044377;
-            if (typeof fn !== 'function') { console.warn('[Monetag] SDK not ready'); return fin(false); }
-            var opts = { catchIfNoFeed: true };
-            if (ymid) opts.ymid = String(ymid);
-            var res = fn(opts);
+            var res;
+            try {
+              var opts = {};
+              if (withOpts && ymid) opts.ymid = String(ymid);
+              res = withOpts ? fn(opts) : fn();
+            } catch (e) {
+              console.warn('[Monetag] error:', e);
+              return withOpts ? run(false) : fin(false);
+            }
             if (res && typeof res.then === 'function') {
-              res.then(function() { fin(true); }).catch(function(err) { console.warn('[Monetag] no ad:', err); fin(false); });
+              res.then(function() { fin(true); }).catch(function(err) {
+                console.warn('[Monetag] rejected:', err);
+                // Rejected instantly with options => retry once with the plain documented call.
+                if (withOpts && Date.now() - t0 < 1500) run(false); else fin(false);
+              });
             } else {
               fin(false);
             }
-            setTimeout(function() { fin(false); }, 180000);
-          } catch (e) {
-            console.warn('[Monetag] error:', e);
-            fin(false);
           }
+          // Wait up to 4s for the SDK script to define the function.
+          var waited = 0;
+          (function boot() {
+            if (typeof window.show_12044377 === 'function') return run(true);
+            if (waited >= 4000) { console.warn('[Monetag] SDK not ready'); return fin(false); }
+            waited += 250; setTimeout(boot, 250);
+          })();
+          setTimeout(function() { fin(false); }, 180000);
         });
       };
     </script>
