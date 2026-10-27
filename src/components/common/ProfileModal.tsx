@@ -15,9 +15,18 @@ import {
   Wallet,
   ExternalLink,
   Sliders,
+  FileText,
+  Lock,
+  Compass,
+  RefreshCw,
+  EyeOff,
+  Eye,
+  Info,
+  Vibrate,
 } from 'lucide-react';
 import { useApp } from '../../context/AppContext';
 import { api } from '../../services/api';
+import { LEGAL_DOCS, LEGAL_ORDER, LegalKey } from './LegalDocs';
 
 interface ProfileModalProps {
   onClose: () => void;
@@ -59,6 +68,60 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({ onClose }) => {
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [deleteInputText, setDeleteInputText] = useState('');
   const [deleting, setDeleting] = useState(false);
+
+  // ---- Settings (saved on this device only) ----
+  const readPref = (key: string, fallback: boolean) => {
+    try {
+      const v = localStorage.getItem(key);
+      return v === null ? fallback : v === '1';
+    } catch { return fallback; }
+  };
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [hapticOn, setHapticOn] = useState<boolean>(() => readPref('e4f_pref_haptic', true));
+  const [hideBalances, setHideBalances] = useState<boolean>(() => readPref('e4f_pref_hide_balances', false));
+  const [legalKey, setLegalKey] = useState<LegalKey | null>(null);
+  const [appVersion, setAppVersion] = useState('');
+  const [refreshing, setRefreshing] = useState(false);
+
+  const savePref = (key: string, value: boolean) => {
+    try { localStorage.setItem(key, value ? '1' : '0'); } catch {}
+  };
+  const buzz = () => {
+    if (!hapticOn) return;
+    try { (window as any).Telegram?.WebApp?.HapticFeedback?.impactOccurred?.('light'); } catch {}
+  };
+  const toggleHaptic = () => {
+    const next = !hapticOn;
+    setHapticOn(next);
+    savePref('e4f_pref_haptic', next);
+    if (next) { try { (window as any).Telegram?.WebApp?.HapticFeedback?.impactOccurred?.('light'); } catch {} }
+  };
+  const toggleHideBalances = () => {
+    const next = !hideBalances;
+    setHideBalances(next);
+    savePref('e4f_pref_hide_balances', next);
+    buzz();
+  };
+  const handleRefreshData = async () => {
+    setRefreshing(true);
+    try {
+      await refreshProfile();
+      addToast('Refreshed', 'Your latest data has been loaded', 'success');
+    } catch {
+      addToast('Refresh Failed', 'Could not refresh now, please try again', 'error');
+    } finally {
+      setRefreshing(false);
+    }
+  };
+
+  // App version (from the published build.txt) shown in Settings
+  useEffect(() => {
+    if (!settingsOpen || appVersion) return;
+    fetch('/build.txt', { cache: 'no-store' })
+      .then(r => (r.ok ? r.text() : ''))
+      .then(t => setAppVersion((t || '').split('|')[0].trim()))
+      .catch(() => {});
+  }, [settingsOpen, appVersion]);
 
   const displayUid = user?.uid || (user?.id ? `E4F${user.id.slice(-6).toUpperCase()}` : 'E4F894102');
   const referralCode = user?.referralCode || '';
@@ -178,8 +241,39 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({ onClose }) => {
           <X className="w-4 h-4" />
         </button>
 
-        {/* VIEW 1: ACCOUNT VERIFICATION SUB-VIEW */}
-        {showVerifyView ? (
+        {/* VIEW 0: LEGAL / INFO DOCUMENT */}
+        {legalKey ? (
+          <div className="space-y-3 animate-in fade-in">
+            <div className="flex items-center gap-2 pr-8">
+              <button
+                onClick={() => { setLegalKey(null); buzz(); }}
+                className="p-1.5 rounded-xl bg-slate-800 text-slate-400 hover:text-white transition-colors"
+              >
+                <ArrowLeft className="w-4 h-4" />
+              </button>
+              <div>
+                <h3 className="text-base font-extrabold text-white">{LEGAL_DOCS[legalKey].title}</h3>
+                <p className="text-[10px] text-slate-400">Updated {LEGAL_DOCS[legalKey].updated}</p>
+              </div>
+            </div>
+            <p className="text-[11px] text-slate-300 leading-relaxed">{LEGAL_DOCS[legalKey].intro}</p>
+            {LEGAL_DOCS[legalKey].sections.map((sec, i) => (
+              <div key={i} className="p-3 rounded-2xl bg-slate-900/70 border border-slate-800/80 space-y-1.5">
+                <h4 className="text-xs font-extrabold text-amber-400">{sec.h}</h4>
+                {sec.p?.map((t, j) => (
+                  <p key={j} className="text-[11px] text-slate-300 leading-relaxed">{t}</p>
+                ))}
+                {sec.li && (
+                  <ul className="list-disc pl-4 space-y-1">
+                    {sec.li.map((t, j) => (
+                      <li key={j} className="text-[11px] text-slate-300 leading-relaxed">{t}</li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+            ))}
+          </div>
+        ) : showVerifyView ? (
           <div className="space-y-4 animate-in fade-in">
             {/* Header */}
             <div className="flex items-center gap-2 pr-8">
@@ -378,23 +472,104 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({ onClose }) => {
               <div className="p-2.5 rounded-2xl bg-slate-900/60 border border-slate-800/80">
                 <div className="text-[9px] text-slate-400 uppercase font-semibold">Spot USDT</div>
                 <div className="text-xs font-extrabold text-emerald-400 mt-0.5 font-mono">
-                  ${balances.usdt.toFixed(2)}
+                  {hideBalances ? '••••' : `$${balances.usdt.toFixed(2)}`}
                 </div>
               </div>
               <div className="p-2.5 rounded-2xl bg-slate-900/60 border border-slate-800/80">
                 <div className="text-[9px] text-slate-400 uppercase font-semibold">Deposit bal</div>
                 <div className="text-xs font-extrabold text-amber-400 mt-0.5 font-mono">
-                  ${((user?.depositBalance || 0)).toFixed(2)}
+                  {hideBalances ? '••••' : `$${((user?.depositBalance || 0)).toFixed(2)}`}
                 </div>
               </div>
               <div className="p-2.5 rounded-2xl bg-slate-900/60 border border-slate-800/80">
                 <div className="text-[9px] text-slate-400 uppercase font-semibold">E4F Pre-List</div>
                 <div className="text-xs font-extrabold text-sky-400 mt-0.5 font-mono">
-                  {balances.e4f.toFixed(1)} E4F
+                  {hideBalances ? '••••' : `${balances.e4f.toFixed(1)} E4F`}
                 </div>
               </div>
             </div>
 
+
+            {/* Settings & Info */}
+            <div className="rounded-2xl bg-slate-900/70 border border-slate-800/80 overflow-hidden">
+              <button
+                onClick={() => { setSettingsOpen(v => !v); buzz(); }}
+                className="w-full flex items-center justify-between p-3 text-xs font-bold text-slate-200 hover:bg-slate-800/50 transition-colors cursor-pointer"
+              >
+                <span className="flex items-center gap-1.5">
+                  <Sliders className="w-3.5 h-3.5 text-amber-400" />
+                  <span>Settings</span>
+                </span>
+                <span className="text-slate-500 text-[10px]">{settingsOpen ? 'Hide' : 'Show'}</span>
+              </button>
+
+              {settingsOpen && (
+                <div className="p-3 pt-0 space-y-2 animate-in fade-in">
+                  {/* Haptic */}
+                  <button
+                    onClick={toggleHaptic}
+                    className="w-full flex items-center justify-between p-2.5 rounded-xl bg-slate-950 border border-slate-800 text-[11px] text-slate-200 cursor-pointer"
+                  >
+                    <span className="flex items-center gap-2">
+                      <Vibrate className="w-3.5 h-3.5 text-sky-400" />
+                      <span>Vibration feedback</span>
+                    </span>
+                    <span className={hapticOn ? 'text-emerald-400 font-bold' : 'text-slate-500 font-bold'}>
+                      {hapticOn ? 'ON' : 'OFF'}
+                    </span>
+                  </button>
+
+                  {/* Hide balances */}
+                  <button
+                    onClick={toggleHideBalances}
+                    className="w-full flex items-center justify-between p-2.5 rounded-xl bg-slate-950 border border-slate-800 text-[11px] text-slate-200 cursor-pointer"
+                  >
+                    <span className="flex items-center gap-2">
+                      {hideBalances ? <EyeOff className="w-3.5 h-3.5 text-sky-400" /> : <Eye className="w-3.5 h-3.5 text-sky-400" />}
+                      <span>Hide balances in profile</span>
+                    </span>
+                    <span className={hideBalances ? 'text-emerald-400 font-bold' : 'text-slate-500 font-bold'}>
+                      {hideBalances ? 'ON' : 'OFF'}
+                    </span>
+                  </button>
+
+                  {/* Refresh data */}
+                  <button
+                    onClick={handleRefreshData}
+                    disabled={refreshing}
+                    className="w-full flex items-center justify-between p-2.5 rounded-xl bg-slate-950 border border-slate-800 text-[11px] text-slate-200 disabled:opacity-60 cursor-pointer"
+                  >
+                    <span className="flex items-center gap-2">
+                      <RefreshCw className={`w-3.5 h-3.5 text-sky-400 ${refreshing ? 'animate-spin' : ''}`} />
+                      <span>Refresh my data</span>
+                    </span>
+                    <span className="text-slate-500 font-bold">{refreshing ? '...' : 'Tap'}</span>
+                  </button>
+
+                  {/* Legal & info */}
+                  <div className="grid grid-cols-3 gap-2 pt-0.5">
+                    {LEGAL_ORDER.map(k => (
+                      <button
+                        key={k}
+                        onClick={() => { setLegalKey(k); buzz(); }}
+                        className="py-2 px-1 rounded-xl bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-200 text-[10px] font-bold flex flex-col items-center gap-1 transition-all cursor-pointer"
+                      >
+                        {k === 'privacy' ? <Lock className="w-3.5 h-3.5 text-amber-400" /> : k === 'whitepaper' ? <FileText className="w-3.5 h-3.5 text-amber-400" /> : <Compass className="w-3.5 h-3.5 text-amber-400" />}
+                        <span>{LEGAL_DOCS[k].title}</span>
+                      </button>
+                    ))}
+                  </div>
+
+                  <div className="flex items-start gap-1.5 text-[10px] text-slate-500 leading-relaxed pt-1">
+                    <Info className="w-3 h-3 shrink-0 mt-0.5" />
+                    <span>
+                      Ads are optional and play inside the app. You are rewarded only after an ad finishes, never for clicking.
+                      {appVersion ? ` Version: ${appVersion}` : ''}
+                    </span>
+                  </div>
+                </div>
+              )}
+            </div>
 
             {/* Account Deletion */}
             <div className="pt-2 border-t border-slate-800/80">
