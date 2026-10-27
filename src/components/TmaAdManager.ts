@@ -6,19 +6,33 @@ declare global {
   }
 }
 
+// Spot IDs exactly as shown in the OnClickA dashboard "Spot ID" column (plain digits).
+// "E4F" in the dashboard is the ad-code NAME prefix ("E4F Reward"), not part of the ID.
 export const TMA_SPOTS: Record<string, string> = {
-  MINING: "6153774E4F",  // 468588 Bonus - Mining
-  GIFTBOX: "6153772E4F", // 468586 TASK - Gift Box
-  SPIN: "6153717E4F"     // 468529 Reward - Spin
+  MINING: "6153774",  // 468588 Bonus - Mining
+  GIFTBOX: "6153772", // 468586 TASK - Gift Box
+  SPIN: "6153717"     // 468529 Reward - Spin
 };
 
+/** Plain numeric Spot ID (any legacy "...E4F" suffix is removed). */
 export function getFixedId(id: string | number | undefined): string {
   if (!id) return '';
-  const str = String(id).trim();
-  if (str === "6153774") return "6153774E4F";
-  if (str === "6153772") return "6153772E4F";
-  if (str === "6153717") return "6153717E4F";
-  return str;
+  return String(id).trim().replace(/E4F$/i, '');
+}
+
+/** Try the plain ID first, then the legacy "...E4F" form (in case the network really uses it). */
+async function initSpot(base: string): Promise<() => Promise<void>> {
+  const withTimeout = (p: Promise<any>) =>
+    Promise.race([p, new Promise((_, rej) => setTimeout(() => rej(new Error('OnClickA init timeout')), 8000))]);
+  let lastErr: any;
+  for (const spot of [base, base + 'E4F']) {
+    try {
+      const show: any = await withTimeout(Promise.resolve(window.initCdTma!({ id: spot })));
+      if (typeof show === 'function') return show as () => Promise<void>;
+      lastErr = new Error('OnClickA show method missing');
+    } catch (e) { lastErr = e; }
+  }
+  throw lastErr || new Error('OnClickA init failed');
 }
 
 let tmaShowMethods: Record<string, () => Promise<void>> = {};
@@ -27,7 +41,7 @@ export function initAllTmaAds() {
   if (typeof window === 'undefined' || !window.initCdTma) return;
   Object.entries(TMA_SPOTS).forEach(([key, rawId]) => {
     const id = getFixedId(rawId);
-    window.initCdTma!({ id })
+    initSpot(id)
       .then((show: () => Promise<void>) => {
         tmaShowMethods[key] = show;
         console.log(`TMA ${key} ready: ${id}`);
@@ -50,7 +64,7 @@ export async function showTmaAd(type: 'MINING' | 'GIFTBOX' | 'SPIN' | string): P
     if (typeof window !== 'undefined' && window.initCdTma) {
       try {
         const spotId = getFixedId(TMA_SPOTS[normKey] || TMA_SPOTS.MINING);
-        const show = await window.initCdTma({ id: spotId });
+        const show = await initSpot(spotId);
         tmaShowMethods[normKey] = show;
         await show(); // This plays INSIDE Telegram, not external
         return true;
@@ -78,10 +92,7 @@ function getTmaShowById(rawId: string): Promise<() => Promise<void>> {
     if (getFixedId(TMA_SPOTS[k]) === id && tmaShowMethods[k]) return Promise.resolve(tmaShowMethods[k]);
   }
   if (!tmaInitById[id]) {
-    tmaInitById[id] = Promise.resolve(window.initCdTma({ id })).then((show: any) => {
-      if (typeof show !== 'function') throw new Error('OnClickA show method missing');
-      return show as () => Promise<void>;
-    });
+    tmaInitById[id] = initSpot(id);
     tmaInitById[id].catch(() => { delete tmaInitById[id]; }); // allow a fresh init next time
   }
   return tmaInitById[id];
