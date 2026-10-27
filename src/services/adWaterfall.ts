@@ -206,7 +206,7 @@ export async function showRichadsAd(
     const ok = await fn(cleanId);
     return ok
       ? { success: true, completed: true, adUrl }
-      : { success: false, completed: false, adUrl, reason: 'RichAds ad was not completed' };
+      : { success: false, completed: false, adUrl, reason: (window as any).__e4fRichAdsLast || 'RichAds ad was not completed' };
   } catch (err: any) {
     console.warn('[RichAds Error]:', err);
     return { success: false, completed: false, adUrl, reason: err?.message || 'RichAds failed' };
@@ -233,7 +233,7 @@ export async function showMonetagAd(
       }
       const showFn = (window as any).show_12044377;
       if (typeof showFn === 'function') {
-        await showFn(ymid ? { ymid: String(ymid), catchIfNoFeed: true } : { catchIfNoFeed: true });
+        await (ymid ? showFn({ ymid: String(ymid) }) : showFn());
         return { success: true, completed: true, adUrl };
       }
     }
