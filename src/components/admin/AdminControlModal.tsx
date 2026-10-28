@@ -59,6 +59,8 @@ export const AdminControlModal: React.FC<AdminControlModalProps> = ({ onClose })
 
   // Ad Settings
   const [adRequired, setAdRequired] = useState(miningStats?.adRequired ?? true);
+  const [strictTaskTimer, setStrictTaskTimer] = useState(true);
+  const [strictTimerBusy, setStrictTimerBusy] = useState(false);
   const [adDuration, setAdDuration] = useState(60);
   const [spinAdDuration, setSpinAdDuration] = useState(30);
   const [giftBoxAdDuration, setGiftBoxAdDuration] = useState(30);
@@ -71,13 +73,13 @@ export const AdminControlModal: React.FC<AdminControlModalProps> = ({ onClose })
   // 10 Waterfall Ad Variables for Spin & Gift Box
   const [spin01Richads, setSpin01Richads] = useState('410203');
   const [spin02Monetag, setSpin02Monetag] = useState('12044377');
-  const [spin03Onclicka, setSpin03Onclicka] = useState('6153717E4F');
+  const [spin03Onclicka, setSpin03Onclicka] = useState('6153717');
   const [spin04Richads, setSpin04Richads] = useState('410203');
   const [spin05Monetag, setSpin05Monetag] = useState('12044377');
 
   const [box01Richads, setBox01Richads] = useState('410202');
   const [box02Monetag, setBox02Monetag] = useState('12044377');
-  const [box03Onclicka, setBox03Onclicka] = useState('6153772E4F');
+  const [box03Onclicka, setBox03Onclicka] = useState('6153772');
   const [box04Richads, setBox04Richads] = useState('410202');
   const [box05Monetag, setBox05Monetag] = useState('12044377');
 
@@ -87,7 +89,7 @@ export const AdminControlModal: React.FC<AdminControlModalProps> = ({ onClose })
   const [miningWaterfallEnabled, setMiningWaterfallEnabled] = useState(true);
   const [mining01Richads, setMining01Richads] = useState('410204');
   const [mining02Monetag, setMining02Monetag] = useState('12044377');
-  const [mining03Onclicka, setMining03Onclicka] = useState('6153774E4F');
+  const [mining03Onclicka, setMining03Onclicka] = useState('6153774');
   const [mining04Richads, setMining04Richads] = useState('410204');
   const [mining05Monetag, setMining05Monetag] = useState('12044377');
   // Hourly Mining Rate (E4F / Hour) - Dynamic Real-Time Admin Control
@@ -308,6 +310,7 @@ export const AdminControlModal: React.FC<AdminControlModalProps> = ({ onClose })
       }
       if (dash?.systemSettings) {
         setAdRequired(dash.systemSettings.rewardedAdRequired ?? true);
+        setStrictTaskTimer((dash.systemSettings as any).strictTaskTimer !== false);
         if (dash.systemSettings.miningAdDurationSeconds !== undefined) {
           setAdDuration(dash.systemSettings.miningAdDurationSeconds);
         } else if (dash.systemSettings.adMiningDurationSeconds !== undefined) {
@@ -383,21 +386,21 @@ export const AdminControlModal: React.FC<AdminControlModalProps> = ({ onClose })
           if (!val || typeof val !== 'string') return fallback;
           const t = val.trim();
           if (/^(spin|box|mining)_[0-9a-z_]+$/i.test(t)) return fallback;
-          if (t === '6153774') return '6153774E4F';
-          if (t === '6153772') return '6153772E4F';
-          if (t === '6153717') return '6153717E4F';
+          if (t === '6153774') return '6153774';
+          if (t === '6153772') return '6153772';
+          if (t === '6153717') return '6153717';
           return t || fallback;
         };
 
         setSpin01Richads(sanitizeAdminAdId(dash.systemSettings.spin_01_richads, '410203'));
         setSpin02Monetag(sanitizeAdminAdId(dash.systemSettings.spin_02_monetag, '12044377'));
-        setSpin03Onclicka(sanitizeAdminAdId(dash.systemSettings.spin_03_onclicka, '6153717E4F'));
+        setSpin03Onclicka(sanitizeAdminAdId(dash.systemSettings.spin_03_onclicka, '6153717'));
         setSpin04Richads(sanitizeAdminAdId(dash.systemSettings.spin_04_richads, '410203'));
         setSpin05Monetag(sanitizeAdminAdId(dash.systemSettings.spin_05_monetag, '12044377'));
 
         setBox01Richads(sanitizeAdminAdId(dash.systemSettings.box_01_richads, '410202'));
         setBox02Monetag(sanitizeAdminAdId(dash.systemSettings.box_02_monetag, '12044377'));
-        setBox03Onclicka(sanitizeAdminAdId(dash.systemSettings.box_03_onclicka, '6153772E4F'));
+        setBox03Onclicka(sanitizeAdminAdId(dash.systemSettings.box_03_onclicka, '6153772'));
         setBox04Richads(sanitizeAdminAdId(dash.systemSettings.box_04_richads, '410202'));
         setBox05Monetag(sanitizeAdminAdId(dash.systemSettings.box_05_monetag, '12044377'));
 
@@ -415,7 +418,7 @@ export const AdminControlModal: React.FC<AdminControlModalProps> = ({ onClose })
         if (dash.systemSettings.miningWaterfallEnabled !== undefined) setMiningWaterfallEnabled(dash.systemSettings.miningWaterfallEnabled);
         setMining01Richads(sanitizeAdminAdId(dash.systemSettings.mining_01_richads, '410204'));
         setMining02Monetag(sanitizeAdminAdId(dash.systemSettings.mining_02_monetag, '12044377'));
-        setMining03Onclicka(sanitizeAdminAdId(dash.systemSettings.mining_03_onclicka, '6153774E4F'));
+        setMining03Onclicka(sanitizeAdminAdId(dash.systemSettings.mining_03_onclicka, '6153774'));
         setMining04Richads(sanitizeAdminAdId(dash.systemSettings.mining_04_richads, '410204'));
         setMining05Monetag(sanitizeAdminAdId(dash.systemSettings.mining_05_monetag, '12044377'));
         if (dash.systemSettings.miningRatePerHour !== undefined) setMiningRatePerHour(dash.systemSettings.miningRatePerHour);
@@ -456,12 +459,12 @@ export const AdminControlModal: React.FC<AdminControlModalProps> = ({ onClose })
         monetagTelegramSdkEnabled,
         spin_01_richads: cleanAdId(spin01Richads, '410203'),
         spin_02_monetag: cleanAdId(spin02Monetag, '12044377'),
-        spin_03_onclicka: cleanAdId(spin03Onclicka, '6153717E4F'),
+        spin_03_onclicka: cleanAdId(spin03Onclicka, '6153717'),
         spin_04_richads: cleanAdId(spin04Richads, '12044377'),
         spin_05_monetag: cleanAdId(spin05Monetag, '12044377'),
         box_01_richads: cleanAdId(box01Richads, '410202'),
         box_02_monetag: cleanAdId(box02Monetag, '12044377'),
-        box_03_onclicka: cleanAdId(box03Onclicka, '6153772E4F'),
+        box_03_onclicka: cleanAdId(box03Onclicka, '6153772'),
         box_04_richads: cleanAdId(box04Richads, '12044377'),
         box_05_monetag: cleanAdId(box05Monetag, '12044377'),
         // Mining Waterfall Gate Settings
@@ -470,7 +473,7 @@ export const AdminControlModal: React.FC<AdminControlModalProps> = ({ onClose })
         miningWaterfallEnabled,
         mining_01_richads: cleanAdId(mining01Richads, '410204'),
         mining_02_monetag: cleanAdId(mining02Monetag, '12044377'),
-        mining_03_onclicka: cleanAdId(mining03Onclicka, '6153774E4F'),
+        mining_03_onclicka: cleanAdId(mining03Onclicka, '6153774'),
         mining_04_richads: cleanAdId(mining04Richads, '410204'),
         mining_05_monetag: cleanAdId(mining05Monetag, '12044377'),
         miningRatePerHour: Number(miningRatePerHour),
@@ -483,17 +486,17 @@ export const AdminControlModal: React.FC<AdminControlModalProps> = ({ onClose })
           JSON.stringify({
             mining_01_richads: cleanAdId(mining01Richads, '410204'),
             mining_02_monetag: cleanAdId(mining02Monetag, '12044377'),
-            mining_03_onclicka: cleanAdId(mining03Onclicka, '6153774E4F'),
+            mining_03_onclicka: cleanAdId(mining03Onclicka, '6153774'),
             mining_04_richads: cleanAdId(mining04Richads, '410204'),
             mining_05_monetag: cleanAdId(mining05Monetag, '12044377'),
             spin_01_richads: cleanAdId(spin01Richads, '410203'),
             spin_02_monetag: cleanAdId(spin02Monetag, '12044377'),
-            spin_03_onclicka: cleanAdId(spin03Onclicka, '6153717E4F'),
+            spin_03_onclicka: cleanAdId(spin03Onclicka, '6153717'),
             spin_04_richads: cleanAdId(spin04Richads, '12044377'),
             spin_05_monetag: cleanAdId(spin05Monetag, '12044377'),
             box_01_richads: cleanAdId(box01Richads, '410202'),
             box_02_monetag: cleanAdId(box02Monetag, '12044377'),
-            box_03_onclicka: cleanAdId(box03Onclicka, '6153772E4F'),
+            box_03_onclicka: cleanAdId(box03Onclicka, '6153772'),
             box_04_richads: cleanAdId(box04Richads, '12044377'),
             box_05_monetag: cleanAdId(box05Monetag, '12044377'),
             miningAdDuration: Number(adDuration),
@@ -800,6 +803,22 @@ export const AdminControlModal: React.FC<AdminControlModalProps> = ({ onClose })
     }
   };
 
+  // Strict task timer ON/OFF (saved immediately)
+  const handleToggleStrictTimer = async () => {
+    if (strictTimerBusy) return;
+    const next = !strictTaskTimer;
+    setStrictTimerBusy(true);
+    try {
+      await api.updateAdminSettings({ strictTaskTimer: next });
+      setStrictTaskTimer(next);
+      addToast('Task Timer', next ? 'Strict timer ON: time counts only while users stay in the app' : 'Strict timer OFF: classic timer', 'success');
+    } catch (err: any) {
+      addToast('Save Failed', err?.message || 'Could not save', 'error');
+    } finally {
+      setStrictTimerBusy(false);
+    }
+  };
+
   // Review Task Submission
   const handleReviewSubmission = async (submissionId: string, decision: 'APPROVE' | 'REJECT') => {
     setReviewingId(submissionId);
@@ -1050,6 +1069,11 @@ export const AdminControlModal: React.FC<AdminControlModalProps> = ({ onClose })
                         <div className="text-[11px] text-slate-400 mt-0.5">
                           Configure which ad network loads on Mining button click without app updates.
                         </div>
+                        {!adRequired && (
+                          <div className="text-[11px] text-amber-400 mt-1 font-semibold">
+                            Ad Gate is OFF: users start mining without watching an ad. Save to apply.
+                          </div>
+                        )}
                       </div>
                       <div className="flex items-center gap-2">
                         <span className={`text-[10px] font-bold px-2 py-0.5 rounded-md ${
@@ -1269,7 +1293,7 @@ export const AdminControlModal: React.FC<AdminControlModalProps> = ({ onClose })
                             type="text"
                             value={mining03Onclicka}
                             onChange={e => setMining03Onclicka(e.target.value)}
-                            placeholder="e.g. 6153774E4F"
+                            placeholder="e.g. 6153774"
                             className="w-full px-2.5 py-1.5 rounded-lg bg-slate-900 border border-slate-700 text-xs text-white font-mono"
                           />
                         </div>
@@ -1433,7 +1457,7 @@ export const AdminControlModal: React.FC<AdminControlModalProps> = ({ onClose })
                             type="text"
                             value={spin03Onclicka}
                             onChange={e => setSpin03Onclicka(e.target.value)}
-                            placeholder="e.g. 6153717E4F"
+                            placeholder="e.g. 6153717"
                             className="w-full px-2.5 py-1.5 rounded-lg bg-slate-900 border border-slate-700 text-xs text-white font-mono"
                           />
                         </div>
@@ -1545,7 +1569,7 @@ export const AdminControlModal: React.FC<AdminControlModalProps> = ({ onClose })
                             type="text"
                             value={box03Onclicka}
                             onChange={e => setBox03Onclicka(e.target.value)}
-                            placeholder="e.g. 6153772E4F"
+                            placeholder="e.g. 6153772"
                             className="w-full px-2.5 py-1.5 rounded-lg bg-slate-900 border border-slate-700 text-xs text-white font-mono"
                           />
                         </div>
@@ -1681,16 +1705,17 @@ export const AdminControlModal: React.FC<AdminControlModalProps> = ({ onClose })
                         <div className="text-[10px] text-slate-400">Configure 5 daily spins and 8 prize amounts</div>
                       </div>
                       <div className="flex items-center gap-2">
-                        <span className="text-[10px] text-slate-400 font-semibold">Ad Gate</span>
+                        <span className="text-[10px] text-slate-400 font-semibold">Ad Gate (always on)</span>
                         <button
-                          onClick={() => setRewardSpinAdRequired(!rewardSpinAdRequired)}
-                          className={`w-11 h-6 rounded-full transition-colors relative cursor-pointer ${
-                            rewardSpinAdRequired ? 'bg-amber-500' : 'bg-slate-700'
+                          onClick={() => {}}
+                          title="Spin ads are always required"
+                          className={`w-11 h-6 rounded-full transition-colors relative cursor-not-allowed opacity-70 ${
+                            'bg-amber-500'
                           }`}
                         >
                           <div
                             className={`w-4 h-4 rounded-full bg-slate-950 transition-transform absolute top-1 ${
-                              rewardSpinAdRequired ? 'right-1' : 'left-1'
+                              'right-1'
                             }`}
                           />
                         </button>
@@ -1802,16 +1827,17 @@ export const AdminControlModal: React.FC<AdminControlModalProps> = ({ onClose })
                         <div className="text-[10px] text-slate-400">Configure reward amounts and assets per mystery box</div>
                       </div>
                       <div className="flex items-center gap-2">
-                        <span className="text-[10px] text-slate-400 font-semibold">Ad Gate</span>
+                        <span className="text-[10px] text-slate-400 font-semibold">Ad Gate (always on)</span>
                         <button
-                          onClick={() => setGiftBoxAdRequired(!giftBoxAdRequired)}
-                          className={`w-11 h-6 rounded-full transition-colors relative cursor-pointer ${
-                            giftBoxAdRequired ? 'bg-amber-500' : 'bg-slate-700'
+                          onClick={() => {}}
+                          title="Gift Box ads are always required"
+                          className={`w-11 h-6 rounded-full transition-colors relative cursor-not-allowed opacity-70 ${
+                            'bg-amber-500'
                           }`}
                         >
                           <div
                             className={`w-4 h-4 rounded-full bg-slate-950 transition-transform absolute top-1 ${
-                              giftBoxAdRequired ? 'right-1' : 'left-1'
+                              'right-1'
                             }`}
                           />
                         </button>
@@ -3134,6 +3160,23 @@ export const AdminControlModal: React.FC<AdminControlModalProps> = ({ onClose })
               {/* 5. DYNAMIC TASKS */}
               {activeTab === 'TASKS' && (
                 <div className="space-y-4 p-1">
+                  {/* Strict timer switch */}
+                  <div className="p-3 rounded-2xl bg-slate-900/80 border border-slate-800 flex items-center justify-between gap-3">
+                    <div>
+                      <div className="text-xs font-bold text-white">Strict Task Timer</div>
+                      <div className="text-[10px] text-slate-400 leading-snug">
+                        ON: time is counted by the server only while the user stays in the app. Leaving, switching tab or closing pauses it. Set the seconds per task below.
+                      </div>
+                    </div>
+                    <button
+                      onClick={handleToggleStrictTimer}
+                      disabled={strictTimerBusy}
+                      className={`relative w-11 h-6 rounded-full shrink-0 transition-colors cursor-pointer ${strictTaskTimer ? 'bg-amber-500' : 'bg-slate-700'} ${strictTimerBusy ? 'opacity-60' : ''}`}
+                    >
+                      <span className={`absolute top-1 w-4 h-4 rounded-full bg-white transition-all ${strictTaskTimer ? 'right-1' : 'left-1'}`} />
+                    </button>
+                  </div>
+
                   {/* Create Task Form */}
                   <div className="p-3.5 rounded-2xl bg-slate-900/80 border border-slate-800 space-y-2.5">
                     <div className="font-bold text-white flex items-center gap-1.5">
