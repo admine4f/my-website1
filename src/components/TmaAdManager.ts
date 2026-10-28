@@ -29,7 +29,12 @@ async function initSpot(base: string): Promise<() => Promise<void>> {
     try {
       const show: any = await withTimeout(Promise.resolve(window.initCdTma!({ id: spot })));
       if (typeof show === 'function') return show as () => Promise<void>;
-      lastErr = new Error('OnClickA show method missing');
+      // Some SDK versions return an object that carries the show function
+      if (show && typeof show === 'object') {
+        const k = ['show', 'showAd', 'showVideo', 'run', 'play'].find(n => typeof (show as any)[n] === 'function');
+        if (k) return () => (show as any)[k]();
+      }
+      lastErr = new Error(`OnClickA spot ${spot} not ready (the network returned no ad for this Spot ID)`);
     } catch (e) { lastErr = e; }
   }
   throw lastErr || new Error('OnClickA init failed');
