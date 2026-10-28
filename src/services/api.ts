@@ -380,7 +380,21 @@ export function saveLocalDailyCheckIn(_userId: string, _state: DailyCheckInState
   // Pure server-authoritative state backed by public.e4f_daily_checkins (No local storage tampering)
 }
 
-const taskTimerTokens: Record<string, string> = {};
+// Timer tokens are kept in localStorage too, so progress survives closing/killing the app.
+// They are signed by the server, so editing them only invalidates them.
+const TIMER_TOKEN_STORE = 'e4f_task_timer_tokens';
+const taskTimerTokens: Record<string, string> = (() => {
+  try {
+    const raw = localStorage.getItem(TIMER_TOKEN_STORE);
+    const parsed = raw ? JSON.parse(raw) : {};
+    return parsed && typeof parsed === 'object' ? parsed : {};
+  } catch {
+    return {};
+  }
+})();
+const persistTimerTokens = () => {
+  try { localStorage.setItem(TIMER_TOKEN_STORE, JSON.stringify(taskTimerTokens)); } catch { /* ignore */ }
+};
 export const api = {
   // Auth
   async loginTelegram(
@@ -1018,7 +1032,7 @@ export const api = {
     throw new Error((data && data.error) || 'Could not claim the task. Please try again.');
   },
 
-  async startTaskTimer(userId: string, taskId: string, accumulatedSeconds?: number): Promise<{ success: boolean; startTime: number; durationSeconds: number; url: string }> {
+  async startTaskTimer(userId: string, taskId: string, accumulatedSeconds?: number): Promise<{ success: boolean; startTime: number; durationSeconds: number; url: string; strict?: boolean; accumulatedSeconds?: number }> {
     const res = await fetch('/api/tasks/start-timer', {
       method: 'POST',
       headers: api.getUserAuthHeaders(),
@@ -1026,10 +1040,25 @@ export const api = {
     });
     const data = await parseResponseJson(res);
     if (res.ok && data && data.success) {
-      if (data.timerToken) taskTimerTokens[`${userId}_${taskId}`] = data.timerToken;
+      if (data.timerToken) { taskTimerTokens[`${userId}_${taskId}`] = data.timerToken; persistTimerTokens(); }
       return data;
     }
     throw new Error((data && data.error) || 'Could not start the task. Please try again.');
+  },
+
+  // Heartbeat: the server only counts time while these pings keep arriving (app visible).
+  async pingTaskTimer(userId: string, taskId: string, pause = false): Promise<{ success: boolean; accumulatedSeconds: number; remainingSeconds: number; durationSeconds: number; done: boolean; strict: boolean }> {
+    const res = await fetch('/api/tasks/timer-ping', {
+      method: 'POST',
+      headers: api.getUserAuthHeaders(),
+      body: JSON.stringify({ userId, taskId, pause, timerToken: taskTimerTokens[`${userId}_${taskId}`] }),
+    });
+    const data = await parseResponseJson(res);
+    if (res.ok && data && data.success) {
+      if (data.timerToken) { taskTimerTokens[`${userId}_${taskId}`] = data.timerToken; persistTimerTokens(); }
+      return data;
+    }
+    throw new Error((data && data.error) || 'Timer ping failed.');
   },
 
   async verifyTaskTimer(userId: string, taskId: string, accumulatedSeconds?: number): Promise<any> {
@@ -1041,6 +1070,7 @@ export const api = {
     const data = await parseResponseJson(res);
     if (res.ok && data && data.success) {
       delete taskTimerTokens[`${userId}_${taskId}`];
+      persistTimerTokens();
       if (data.balances) saveLocalBalances(data.balances);
       return data;
     }
