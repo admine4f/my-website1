@@ -86,20 +86,20 @@ import {
 // =========================================================================
 export let SPIN_01_RICHADS = '410203';
 export let SPIN_02_MONETAG = '12044377';
-export let SPIN_03_ONCLICKA = '6153717E4F';
+export let SPIN_03_ONCLICKA = '6153717';
 export let SPIN_04_RICHADS = '12044377'; // Slot 4 = Monetag 12044377
 export let SPIN_05_MONETAG = '12044377';
 
 export let BOX_01_RICHADS = '410202';
 export let BOX_02_MONETAG = '12044377';
-export let BOX_03_ONCLICKA = '6153772E4F';
+export let BOX_03_ONCLICKA = '6153772';
 export let BOX_04_RICHADS = '12044377'; // Slot 4 = Monetag 12044377
 export let BOX_05_MONETAG = '12044377';
 
 // Mining Waterfall Ad Variables
 export let MINING_01_RICHADS = '410204';
 export let MINING_02_MONETAG = '12044377';
-export let MINING_03_ONCLICKA = '6153774E4F';
+export let MINING_03_ONCLICKA = '6153774';
 export let MINING_04_RICHADS = '410204'; // Default RichAds 410204
 export let MINING_05_MONETAG = '12044377';
 export let MINING_PRIMARY_NETWORK: 'RichAds' | 'Monetag' | 'OnClickA' = 'RichAds';
@@ -695,7 +695,7 @@ export const UnifiedRewardedAdModal: React.FC<UnifiedRewardedAdModalProps> = ({
                   <span>{currentTier?.provider} Real Ad</span>
                 </div>
                 <span className="px-2.5 py-0.5 rounded-full bg-slate-800 text-slate-300 font-mono text-[10px] font-semibold border border-slate-700">
-                  Zone: {currentTier?.id || 'Active'}
+                  Zone: {String(currentTier?.id || 'Active').replace(/E4F$/i, '')}
                 </span>
               </div>
 
@@ -706,7 +706,7 @@ export const UnifiedRewardedAdModal: React.FC<UnifiedRewardedAdModalProps> = ({
                 ) : actionType === 'SPIN' ? (
                   <AdInside adScript={getAdInsideScript(currentTier?.provider || 'RichAds', currentTier?.id || '410203')} />
                 ) : (
-                  <AdInside adScript={getAdInsideScript(currentTier?.provider || (targetId === 2 || targetId === 5 ? 'Monetag' : targetId === 3 ? 'OnClickA' : 'RichAds'), currentTier?.id || (targetId === 2 || targetId === 5 ? '12044377' : targetId === 3 ? '6153772E4F' : '410202'))} />
+                  <AdInside adScript={getAdInsideScript(currentTier?.provider || (targetId === 2 || targetId === 5 ? 'Monetag' : targetId === 3 ? 'OnClickA' : 'RichAds'), currentTier?.id || (targetId === 2 || targetId === 5 ? '12044377' : targetId === 3 ? '6153772' : '410202'))} />
                 )}
               </div>
 
