@@ -104,7 +104,12 @@ export const MiningView: React.FC = () => {
   const handleStartMiningPress = async () => {
     if (!user) return;
 
-    // A finished rewarded ad is always required to start mining (enforced by the server).
+    // The server decides whether an ad is needed (admin Ad Gate). If the admin switched the gate OFF,
+    // start directly; otherwise a finished rewarded ad is required (enforced by the server).
+    if (miningStats && miningStats.adRequired === false) {
+      executeStartMining();
+      return;
+    }
     // Open 100% In-App Mining Waterfall Ad Modal inside Telegram
     setShowAdModal(true);
   };
