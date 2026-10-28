@@ -1,1 +1,1 @@
-E4F-FINAL-v5 | TADS removed | SECURE AD ENGINE | built 2026-10-26
+E4F-FINAL-v15 | Notice details popup + OnClickA id fix + v10-v14 | 2026-10-28
