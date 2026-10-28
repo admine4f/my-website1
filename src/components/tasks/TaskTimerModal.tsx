@@ -52,6 +52,11 @@ export const TaskTimerModal: React.FC<TaskTimerModalProps> = ({
   const isMountedRef = useRef<boolean>(true);
   const hasStartedRef = useRef<boolean>(false);
   const isClaimingRef = useRef<boolean>(false);
+  const strictRef = useRef<boolean>(false);
+  const syncBaseRef = useRef<number>(0); // server-counted seconds at last sync
+  const syncAtRef = useRef<number>(0); // local time of last sync
+  const pingTimerRef = useRef<any>(null);
+  const pingBusyRef = useRef<boolean>(false);
 
   // Helper to persist timer state in localStorage
   const saveProgress = useCallback(
@@ -104,12 +109,22 @@ export const TaskTimerModal: React.FC<TaskTimerModalProps> = ({
     return () => {
       isMountedRef.current = false;
       if (timerRef.current) clearInterval(timerRef.current);
+      if (pingTimerRef.current) clearInterval(pingTimerRef.current);
+      if (strictRef.current && syncAtRef.current) api.pingTaskTimer(userId, task.id, true).catch(() => {});
     };
   }, [userId, task.id, durationSeconds]);
 
   // 2. Visibility change & Focus event listener (smooth synchronization, freeze if user returns early)
   useEffect(() => {
     const handleVisibilityChange = () => {
+      // STRICT mode: leaving the app / switching tab pauses the server timer.
+      if (strictRef.current) {
+        if (!isMountedRef.current || !hasStartedRef.current || !syncAtRef.current) return;
+        if (document.visibilityState !== 'visible') {
+          pauseStrict();
+        }
+        return;
+      }
       if (!isMountedRef.current || !hasStartedRef.current || !currentBurstStartTimeRef.current) return;
 
       if (document.visibilityState === 'visible') {
@@ -143,6 +158,56 @@ export const TaskTimerModal: React.FC<TaskTimerModalProps> = ({
     };
   }, [durationSeconds, saveProgress]);
 
+  // ---- STRICT (server-counted) timer helpers ----
+  const stopStrictLoops = () => {
+    if (timerRef.current) clearInterval(timerRef.current);
+    if (pingTimerRef.current) clearInterval(pingTimerRef.current);
+    timerRef.current = null;
+    pingTimerRef.current = null;
+  };
+
+  const applyServerState = (acc: number, done: boolean) => {
+    const a = Math.min(durationSeconds, Math.max(0, acc));
+    syncBaseRef.current = a;
+    syncAtRef.current = Date.now();
+    accumulatedSecondsRef.current = a;
+    setSecondsWatched(Math.floor(a));
+    saveProgress(Math.floor(a), done);
+    if (done) {
+      stopStrictLoops();
+      syncAtRef.current = 0;
+      setStep('COMPLETED');
+    }
+  };
+
+  const pauseStrict = () => {
+    if (!strictRef.current) return;
+    stopStrictLoops();
+    // freeze at the last server-confirmed value (never trust local clock)
+    syncAtRef.current = 0;
+    const frozen = Math.floor(syncBaseRef.current);
+    accumulatedSecondsRef.current = frozen;
+    setSecondsWatched(frozen);
+    saveProgress(frozen, false);
+    api.pingTaskTimer(userId, task.id, true).catch(() => {});
+    if (isMountedRef.current && !isClaimingRef.current) setStep('EARLY_EXIT');
+  };
+
+  const doPing = async () => {
+    if (pingBusyRef.current || !strictRef.current) return;
+    if (document.visibilityState !== 'visible') { pauseStrict(); return; }
+    pingBusyRef.current = true;
+    try {
+      const r = await api.pingTaskTimer(userId, task.id, false);
+      if (isMountedRef.current && syncAtRef.current) applyServerState(r.accumulatedSeconds, r.done);
+    } catch (err) {
+      // network trouble: do not credit anything locally, just stop the display from running ahead
+      if (isMountedRef.current) syncAtRef.current = syncAtRef.current || 0;
+    } finally {
+      pingBusyRef.current = false;
+    }
+  };
+
   // 3. User clicks "Visit / Watch" or "Continue"
   const handleStartOrResume = (e?: React.MouseEvent) => {
     if (e) e.preventDefault();
@@ -163,30 +228,50 @@ export const TaskTimerModal: React.FC<TaskTimerModalProps> = ({
     openedWindowRef.current = newWin;
 
     const now = Date.now();
-    currentBurstStartTimeRef.current = now;
 
-    // Notify backend
-    api.startTaskTimer(userId, task.id, accumulatedSecondsRef.current).catch(console.warn);
-
-    setStep('WATCHING');
-
-    // Run active progress tick
-    if (timerRef.current) clearInterval(timerRef.current);
-    timerRef.current = setInterval(() => {
-      if (!currentBurstStartTimeRef.current || !isMountedRef.current) return;
-
-      const currentBurst = Math.floor((Date.now() - currentBurstStartTimeRef.current) / 1000);
-      const total = Math.min(durationSeconds, accumulatedSecondsRef.current + currentBurst);
-      setSecondsWatched(total);
-
-      if (total >= durationSeconds) {
-        clearInterval(timerRef.current);
-        accumulatedSecondsRef.current = durationSeconds;
-        currentBurstStartTimeRef.current = null;
-        saveProgress(durationSeconds, true);
-        setStep('COMPLETED');
-      }
-    }, 500);
+    // Notify backend, then run either the strict (server-counted) or the classic timer
+    api
+      .startTaskTimer(userId, task.id, accumulatedSecondsRef.current)
+      .then(data => {
+        if (!isMountedRef.current) return;
+        if (data.strict) {
+          strictRef.current = true;
+          currentBurstStartTimeRef.current = null;
+          applyServerState(Number(data.accumulatedSeconds) || 0, false);
+          setStep('WATCHING');
+          stopStrictLoops();
+          // smooth display between pings (never exceeds what the server confirmed + a few seconds)
+          timerRef.current = setInterval(() => {
+            if (!syncAtRef.current || document.visibilityState !== 'visible') return;
+            const drift = Math.min(6, (Date.now() - syncAtRef.current) / 1000);
+            setSecondsWatched(Math.min(durationSeconds - 1, Math.floor(syncBaseRef.current + drift)));
+          }, 500);
+          pingTimerRef.current = setInterval(doPing, 4000);
+        } else {
+          strictRef.current = false;
+          currentBurstStartTimeRef.current = now;
+          setStep('WATCHING');
+          if (timerRef.current) clearInterval(timerRef.current);
+          timerRef.current = setInterval(() => {
+            if (!currentBurstStartTimeRef.current || !isMountedRef.current) return;
+            const currentBurst = Math.floor((Date.now() - currentBurstStartTimeRef.current) / 1000);
+            const total = Math.min(durationSeconds, accumulatedSecondsRef.current + currentBurst);
+            setSecondsWatched(total);
+            if (total >= durationSeconds) {
+              clearInterval(timerRef.current);
+              accumulatedSecondsRef.current = durationSeconds;
+              currentBurstStartTimeRef.current = null;
+              saveProgress(durationSeconds, true);
+              setStep('COMPLETED');
+            }
+          }, 500);
+        }
+      })
+      .catch(err => {
+        if (!isMountedRef.current) return;
+        setErrorMsg(err?.message || 'Could not start the task. Please try again.');
+        setStep('EARLY_EXIT');
+      });
   };
 
   // 4. Claim Reward once completed
@@ -230,6 +315,7 @@ export const TaskTimerModal: React.FC<TaskTimerModalProps> = ({
         {step !== 'VERIFYING' && (
           <button
             onClick={() => {
+              if (strictRef.current) pauseStrict();
               if (timerRef.current) clearInterval(timerRef.current);
               if (currentBurstStartTimeRef.current) {
                 const burst = Math.floor((Date.now() - currentBurstStartTimeRef.current) / 1000);

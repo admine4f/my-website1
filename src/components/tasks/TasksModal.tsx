@@ -224,7 +224,7 @@ export const TasksModal: React.FC<TasksModalProps> = ({ onClose }) => {
       if (res.success) {
         addToast(
           'Task Verified!',
-          `+${res.rewardAmount || res.reward} ${res.rewardAsset || res.asset} credited to your wallet!`,
+          `+${res.reward ?? res.rewardAmount} ${res.asset ?? res.rewardAsset} credited to your wallet!`,
           'success'
         );
         setActiveTimers(prev => {
@@ -250,11 +250,15 @@ export const TasksModal: React.FC<TasksModalProps> = ({ onClose }) => {
     try {
       const res = await api.claimTask(user.id, taskId);
       if (res.success) {
-        addToast(
-          'Task Completed!',
-          `+${res.rewardAmount} ${res.rewardAsset} added to your account!`,
-          'success'
-        );
+        if (res.status === 'SUBMITTED') {
+          addToast('Submitted', res.message || 'Your task is waiting for admin review.', 'info');
+        } else {
+          addToast(
+            'Task Completed!',
+            `+${res.reward ?? res.rewardAmount} ${res.asset ?? res.rewardAsset} added to your account!`,
+            'success'
+          );
+        }
         const updated = await api.getTasks(user.id);
         setTasks(updated.tasks);
         await refreshProfile();
