@@ -25,7 +25,18 @@ async function initSpot(base: string): Promise<() => Promise<void>> {
   const withTimeout = (p: Promise<any>) =>
     Promise.race([p, new Promise((_, rej) => setTimeout(() => rej(new Error('OnClickA init timeout')), 8000))]);
   let lastErr: any;
-  for (const spot of [base, base + 'E4F']) {
+  const candidates = [base, base + 'E4F'].filter((v, i, a): v is string => !!v && a.indexOf(v) === i);
+  for (const spot of candidates) {
+    // Capture what the SDK prints to the console while it initialises, so the reason is visible in-app
+    const logs: string[] = [];
+    const origErr = console.error, origWarn = console.warn;
+    const grab = (...a: any[]) => {
+      try { logs.push(a.map(x => (x && x.message) || (typeof x === 'string' ? x : JSON.stringify(x))).join(' ').slice(0, 160)); } catch { /* ignore */ }
+    };
+    const onRej = (ev: any) => grab('rejection:', ev?.reason);
+    console.error = (...a: any[]) => { grab(...a); origErr.apply(console, a as any); };
+    console.warn = (...a: any[]) => { grab(...a); origWarn.apply(console, a as any); };
+    window.addEventListener('unhandledrejection', onRej);
     try {
       const show: any = await withTimeout(Promise.resolve(window.initCdTma!({ id: spot })));
       if (typeof show === 'function') return show as () => Promise<void>;
@@ -34,8 +45,15 @@ async function initSpot(base: string): Promise<() => Promise<void>> {
         const k = ['show', 'showAd', 'showVideo', 'run', 'play'].find(n => typeof (show as any)[n] === 'function');
         if (k) return () => (show as any)[k]();
       }
-      lastErr = new Error(`OnClickA spot ${spot} not ready (the network returned no ad for this Spot ID)`);
-    } catch (e) { lastErr = e; }
+      await new Promise(r => setTimeout(r, 300));
+      lastErr = new Error(`OnClickA spot ${spot} not ready: SDK returned ${show === null ? 'null' : typeof show}${logs.length ? ' | console: ' + logs.slice(0, 2).join(' ; ') : ''}`);
+    } catch (e: any) {
+      lastErr = new Error(`${e?.message || e}${logs.length ? ' | console: ' + logs.slice(0, 2).join(' ; ') : ''}`);
+    } finally {
+      console.error = origErr;
+      console.warn = origWarn;
+      window.removeEventListener('unhandledrejection', onRej);
+    }
   }
   throw lastErr || new Error('OnClickA init failed');
 }
