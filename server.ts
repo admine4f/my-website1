@@ -212,6 +212,41 @@ app.use((req, res, next) => {
   next();
 });
 
+// ---------------------------------------------------------------------
+// ADMIN SETTINGS SHARED ACROSS SERVERLESS INSTANCES
+// On Vercel every request may run on a different instance, so the in-memory
+// `systemSettings` can be stale. Before API requests we re-read the saved row
+// from Supabase (cached 3s). Admin saves always refresh first, so one stale
+// instance can never overwrite a newer setting.
+// ---------------------------------------------------------------------
+let settingsLoadedAt = 0;
+async function refreshSystemSettings(force = false): Promise<void> {
+  if (!supabase) return;
+  if (!force && Date.now() - settingsLoadedAt < 3000) return;
+  try {
+    const { data, error } = await supabase.from('system_settings').select('settings').eq('id', 'global_settings').maybeSingle();
+    if (error) return;
+    if (data && data.settings && typeof data.settings === 'object') {
+      Object.assign(systemSettings, data.settings);
+      delete (systemSettings as any).spin_01_adsgram;
+      delete (systemSettings as any).spin_05_adexora;
+      delete (systemSettings as any).box_01_adsgram;
+      delete (systemSettings as any).box_05_adexora;
+      delete (systemSettings as any).mining_01_adsgram;
+      delete (systemSettings as any).mining_05_adexora;
+      normalizeAdSlotSettings();
+    }
+    settingsLoadedAt = Date.now();
+  } catch {}
+}
+app.use('/api', async (req: Request, _res: Response, next: NextFunction) => {
+  try {
+    const isSettingsWrite = req.method !== 'GET' && /\/admin\/settings/.test(req.path);
+    await refreshSystemSettings(isSettingsWrite);
+  } catch {}
+  next();
+});
+
 // URL Normalization for Vercel Serverless & Proxies
 app.use((req, _res, next) => {
   const forwardedUri = (req.headers['x-forwarded-uri'] || req.headers['x-matched-path']) as string;
@@ -395,6 +430,7 @@ const systemSettings = {
   miningRatePerHour: 0.25,
   miningDurationHours: 8,
   rewardedAdRequired: true,
+  strictTaskTimer: true,
   adMinWatchSeconds: 5,
   adMiningDurationSeconds: 30,
   miningAdDurationSeconds: 30,
@@ -438,12 +474,12 @@ const systemSettings = {
   // Waterfall Ad Block / Zone ID / App IDs (5 Tiers: RichAds, Monetag, OnClickA)
   spin_01_richads: '410203',
   spin_02_monetag: '12044377',
-  spin_03_onclicka: '6153717E4F',
+  spin_03_onclicka: '6153717',
   spin_04_richads: '410203',
   spin_05_monetag: '12044377',
   box_01_richads: '410202',
   box_02_monetag: '12044377',
-  box_03_onclicka: '6153772E4F',
+  box_03_onclicka: '6153772',
   box_04_richads: '410202',
   box_05_monetag: '12044377',
   // Mining Ad Gate & Waterfall Settings (Configurable from Admin without app updates)
@@ -452,7 +488,7 @@ const systemSettings = {
   miningWaterfallEnabled: true,
   mining_01_richads: '410204',
   mining_02_monetag: '12044377',
-  mining_03_onclicka: '6153774E4F',
+  mining_03_onclicka: '6153774',
   mining_04_richads: '410204',
   mining_05_monetag: '12044377',
 };
@@ -469,25 +505,25 @@ try {
 }
 
 // Convert legacy numeric IDs to full E4F format
-if (systemSettings.spin_03_onclicka === '6153717') systemSettings.spin_03_onclicka = '6153717E4F';
-if (systemSettings.box_03_onclicka === '6153772') systemSettings.box_03_onclicka = '6153772E4F';
-if (systemSettings.mining_03_onclicka === '6153774') systemSettings.mining_03_onclicka = '6153774E4F';
+if (systemSettings.spin_03_onclicka === '6153717') systemSettings.spin_03_onclicka = '6153717';
+if (systemSettings.box_03_onclicka === '6153772') systemSettings.box_03_onclicka = '6153772';
+if (systemSettings.mining_03_onclicka === '6153774') systemSettings.mining_03_onclicka = '6153774';
 
 // Guarantee 100% real IDs are present and no placeholder strings exist
 const REAL_DEFAULT_IDS: Record<string, string> = {
   spin_01_richads: '410203',
   spin_02_monetag: '12044377',
-  spin_03_onclicka: '6153717E4F',
+  spin_03_onclicka: '6153717',
   spin_04_richads: '410203',
   spin_05_monetag: '12044377',
   box_01_richads: '410202',
   box_02_monetag: '12044377',
-  box_03_onclicka: '6153772E4F',
+  box_03_onclicka: '6153772',
   box_04_richads: '410202',
   box_05_monetag: '12044377',
   mining_01_richads: '410204',
   mining_02_monetag: '12044377',
-  mining_03_onclicka: '6153774E4F',
+  mining_03_onclicka: '6153774',
   mining_04_richads: '410204',
   mining_05_monetag: '12044377',
   monetagZoneId: '12044377',
@@ -1297,23 +1333,23 @@ function initializeServerState() {
         const TARGET_REAL_IDS: Record<string, string> = {
           spin_01_richads: '410203',
           spin_02_monetag: '12044377',
-          spin_03_onclicka: '6153717E4F',
+          spin_03_onclicka: '6153717',
           spin_04_richads: '410203',
           spin_05_monetag: '12044377',
           box_01_richads: '410202',
           box_02_monetag: '12044377',
-          box_03_onclicka: '6153772E4F',
+          box_03_onclicka: '6153772',
           box_04_richads: '410202',
           box_05_monetag: '12044377',
           mining_01_richads: '410204',
           mining_02_monetag: '12044377',
-          mining_03_onclicka: '6153774E4F',
+          mining_03_onclicka: '6153774',
           mining_04_richads: '410204',
           mining_05_monetag: '12044377',
         };
-        if (systemSettings.spin_03_onclicka === '6153717') systemSettings.spin_03_onclicka = '6153717E4F';
-        if (systemSettings.box_03_onclicka === '6153772') systemSettings.box_03_onclicka = '6153772E4F';
-        if (systemSettings.mining_03_onclicka === '6153774') systemSettings.mining_03_onclicka = '6153774E4F';
+        if (systemSettings.spin_03_onclicka === '6153717') systemSettings.spin_03_onclicka = '6153717';
+        if (systemSettings.box_03_onclicka === '6153772') systemSettings.box_03_onclicka = '6153772';
+        if (systemSettings.mining_03_onclicka === '6153774') systemSettings.mining_03_onclicka = '6153774';
         // Clean out old deprecated ad networks
         delete (systemSettings as any).spin_01_adsgram;
         delete (systemSettings as any).spin_05_adexora;
@@ -2390,9 +2426,9 @@ app.get(['/api/system/public-settings', '/api/system/settings', '/system/public-
         delete (systemSettings as any).mining_01_adsgram;
         delete (systemSettings as any).mining_05_adexora;
 
-        if (systemSettings.spin_03_onclicka === '6153717') systemSettings.spin_03_onclicka = '6153717E4F';
-        if (systemSettings.box_03_onclicka === '6153772') systemSettings.box_03_onclicka = '6153772E4F';
-        if (systemSettings.mining_03_onclicka === '6153774') systemSettings.mining_03_onclicka = '6153774E4F';
+        if (systemSettings.spin_03_onclicka === '6153717') systemSettings.spin_03_onclicka = '6153717';
+        if (systemSettings.box_03_onclicka === '6153772') systemSettings.box_03_onclicka = '6153772';
+        if (systemSettings.mining_03_onclicka === '6153774') systemSettings.mining_03_onclicka = '6153774';
 
         if (!systemSettings.adProvider || (systemSettings as any).adProvider === 'AdsGram' || (systemSettings as any).adProvider === 'Adexora') {
           systemSettings.adProvider = 'RichAds';
@@ -2410,9 +2446,9 @@ app.get(['/api/system/public-settings', '/api/system/settings', '/system/public-
   }
 
   // Ensure full E4F IDs
-  if (systemSettings.spin_03_onclicka === '6153717') systemSettings.spin_03_onclicka = '6153717E4F';
-  if (systemSettings.box_03_onclicka === '6153772') systemSettings.box_03_onclicka = '6153772E4F';
-  if (systemSettings.mining_03_onclicka === '6153774') systemSettings.mining_03_onclicka = '6153774E4F';
+  if (systemSettings.spin_03_onclicka === '6153717') systemSettings.spin_03_onclicka = '6153717';
+  if (systemSettings.box_03_onclicka === '6153772') systemSettings.box_03_onclicka = '6153772';
+  if (systemSettings.mining_03_onclicka === '6153774') systemSettings.mining_03_onclicka = '6153774';
 
   res.json({
     success: true,
@@ -2680,9 +2716,9 @@ const AD_SLOT_NETWORKS: Record<AdAction, AdNetwork[]> = {
   GIFT_BOX: ['RichAds', 'Monetag', 'OnClickA', 'Monetag', 'Monetag'],
 };
 const AD_SLOT_DEFAULT_IDS: Record<AdAction, string[]> = {
-  MINING: ['410204', '12044377', '6153774E4F', '410204', '12044377'],
-  SPIN: ['410203', '12044377', '6153717E4F', '12044377', '12044377'],
-  GIFT_BOX: ['410202', '12044377', '6153772E4F', '12044377', '12044377'],
+  MINING: ['410204', '12044377', '6153774', '410204', '12044377'],
+  SPIN: ['410203', '12044377', '6153717', '12044377', '12044377'],
+  GIFT_BOX: ['410202', '12044377', '6153772', '12044377', '12044377'],
 };
 const AD_SETTING_PREFIX: Record<AdAction, string> = { MINING: 'mining', SPIN: 'spin', GIFT_BOX: 'box' };
 const AD_SETTING_SUFFIX = ['richads', 'monetag', 'onclicka', 'richads', 'monetag'];
@@ -3210,22 +3246,27 @@ const handleStartMining = async (req: Request, res: Response) => {
     return res.status(400).json({ success: false, error: 'A mining session is already active' });
   }
 
-  // A completed rewarded ad is ALWAYS required to start mining (cannot be switched off).
-  if (!adSessionId || !claimToken) {
-    return res.status(403).json({
-      success: false,
-      error: 'Mining locked. Rewarded ad completion is required to start mining.',
-    });
-  }
-  try {
-    const redeemed = await redeemAdClaim(userId, adSessionId, claimToken, 'MINING', 0);
-    if (!redeemed.ok) {
-      return res.status(redeemed.status || 403).json({ success: false, error: redeemed.error || 'Ad verification failed' });
+  // A completed rewarded ad is required to start mining UNLESS the admin switched the mining Ad Gate OFF.
+  // The decision is made here on the server from the saved admin setting; a client can never skip the ad by itself.
+  const miningAdRequired = systemSettings.rewardedAdRequired !== false;
+  let adVerified = false;
+  if (miningAdRequired) {
+    if (!adSessionId || !claimToken) {
+      return res.status(403).json({
+        success: false,
+        error: 'Mining locked. Rewarded ad completion is required to start mining.',
+      });
     }
-  } catch (err: any) {
-    return adStoreFail(res, err);
+    try {
+      const redeemed = await redeemAdClaim(userId, adSessionId, claimToken, 'MINING', 0);
+      if (!redeemed.ok) {
+        return res.status(redeemed.status || 403).json({ success: false, error: redeemed.error || 'Ad verification failed' });
+      }
+    } catch (err: any) {
+      return adStoreFail(res, err);
+    }
+    adVerified = true;
   }
-  const adVerified = true;
 
   const durationSec = systemSettings.miningDurationHours * 3600;
   const referralCount = Number((systemSettings as any).baseReferralBoostCount ?? 12);
@@ -3938,17 +3979,40 @@ async function loadAdminContent(force = false) {
     contentLoadedAt = Date.now();
   } catch {}
 }
-async function saveAdminContent() {
-  if (!supabase) return;
+async function saveAdminContent(): Promise<boolean> {
+  if (!supabase) return true;
   try {
     const now = new Date().toISOString();
-    await supabase.from('e4f_content').upsert([
+    const { error } = await supabase.from('e4f_content').upsert([
       { key: 'announcements', value: announcements, updated_at: now },
       { key: 'dynamic_tasks', value: dynamicTasks, updated_at: now },
       { key: 'task_queue', value: taskSubmissionsQueue.slice(0, 500), updated_at: now },
     ], { onConflict: 'key' });
+    if (error) { console.error('[content] save failed', error.message); return false; }
     contentLoadedAt = Date.now();
-  } catch (e) { console.error('[content] save failed', e); }
+    return true;
+  } catch (e) { console.error('[content] save failed', e); return false; }
+}
+// Real membership check for Telegram channel/group tasks (needs the bot to be an admin of that chat).
+// Returns 'member' | 'not_member' | 'unknown' (unknown = cannot be verified automatically).
+async function verifyTelegramMembership(taskUrl: string, telegramUserId: number): Promise<'member' | 'not_member' | 'unknown'> {
+  try {
+    if (!TELEGRAM_BOT_TOKEN || !telegramUserId) return 'unknown';
+    const m = String(taskUrl || '').match(/^https?:\/\/(?:t|telegram)\.me\/([A-Za-z][A-Za-z0-9_]{3,})\/?$/i);
+    if (!m) return 'unknown';
+    const chat = '@' + m[1];
+    const r = await fetch(
+      `https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/getChatMember?chat_id=${encodeURIComponent(chat)}&user_id=${telegramUserId}`,
+      { signal: AbortSignal.timeout(5000) }
+    );
+    const j: any = await r.json().catch(() => null);
+    if (!j || !j.ok) return 'unknown';
+    const st = String(j.result?.status || '');
+    if (st === 'member' || st === 'administrator' || st === 'creator') return 'member';
+    if (st === 'restricted') return j.result?.is_member ? 'member' : 'not_member';
+    if (st === 'left' || st === 'kicked') return 'not_member';
+    return 'unknown';
+  } catch { return 'unknown'; }
 }
 // One-time task reward guard (durable): PK (user_id, task_id) in e4f_task_claims.
 async function claimTaskOnce(userId: string, taskId: string): Promise<boolean> {
@@ -3974,8 +4038,18 @@ async function hydrateUserTasks(userId: string) {
 }
 app.use(['/api/announcements', '/api/tasks', '/api/admin/announcements', '/api/admin/tasks', '/api/admin/task-submissions'], async (req: Request, res: Response, next: NextFunction) => {
   await loadAdminContent(req.method !== 'GET');
-  if (req.method !== 'GET' && req.method !== 'OPTIONS' && req.path.length >= 0 && (req.originalUrl.startsWith('/api/admin/') || req.originalUrl.startsWith('/api/tasks/submit'))) {
-    res.on('finish', () => { if (res.statusCode < 400) saveAdminContent(); });
+  if (req.method !== 'GET' && req.method !== 'OPTIONS' && (req.originalUrl.startsWith('/api/admin/') || req.originalUrl.startsWith('/api/tasks/submit'))) {
+    // Answer only after the change is stored in the database, so an admin never sees a fake "saved".
+    const origJson = res.json.bind(res);
+    (res as any).json = (body: any) => {
+      if (res.statusCode >= 400) return origJson(body);
+      saveAdminContent().then((ok) => {
+        if (ok) return origJson(body);
+        res.status(500);
+        return origJson({ success: false, error: 'Could not save to the database. Run the latest SQL file in Supabase (e4f_content table) and try again.' });
+      });
+      return res;
+    };
   }
   next();
 });
@@ -4029,16 +4103,54 @@ app.post('/api/tasks/start-timer', requireUserAuth, (req: Request, res: Response
 
   // Stateless proof of when the task was FIRST opened (survives serverless instance changes)
   const prevTimer = adVerify('timer', req.body?.timerToken);
-  const firstStart = prevTimer && prevTimer.uid === timerOwner && prevTimer.tid === taskId ? Number(prevTimer.fs) : Date.now();
-  const timerToken = adSign('timer', { uid: timerOwner, tid: taskId, fs: firstStart });
+  const prevOk = !!(prevTimer && prevTimer.uid === timerOwner && prevTimer.tid === taskId);
+  const firstStart = prevOk ? Number(prevTimer!.fs) : Date.now();
+  const strict = systemSettings.strictTaskTimer !== false;
+  // Strict mode: counted time lives ONLY inside the signed token and only grows through
+  // /api/tasks/timer-ping while the user is really on the task. The client value is ignored.
+  const countedSec = prevOk ? Math.max(0, Math.min(durationSeconds, Number(prevTimer!.acc) || 0)) : 0;
+  const timerToken = adSign('timer', { uid: timerOwner, tid: taskId, fs: firstStart, acc: countedSec, ls: Date.now() });
 
   res.json({
     success: true,
     timerToken,
+    strict,
     startTime: Date.now(),
     durationSeconds,
-    accumulatedSeconds: acc,
+    accumulatedSeconds: strict ? Math.floor(countedSec) : acc,
     url: (task as any).actionUrl || task.url,
+  });
+});
+
+// Timer heartbeat: the server only counts time while the app keeps pinging (app visible).
+// If the user leaves, switches tab, or closes/kills the app, pings stop and the timer stalls.
+const TIMER_PING_MAX_GAP_SEC = 15;
+app.post('/api/tasks/timer-ping', requireUserAuth, (req: Request, res: Response) => {
+  const { userId, taskId } = req.body || {};
+  const owner = String((req as any).verifiedUserId || userId);
+  const task = dynamicTasks.find(t => t.id === taskId);
+  if (!task) return res.status(404).json({ success: false, error: 'Task not found' });
+  const requiredSeconds = Math.max(5, task.durationSeconds || 30);
+  const tt = adVerify('timer', req.body?.timerToken);
+  if (!tt || tt.uid !== owner || tt.tid !== taskId) {
+    return res.status(400).json({ success: false, error: 'Timer not started. Please start the task again.' });
+  }
+  const now = Date.now();
+  const ls = Number(tt.ls) || 0;
+  let acc = Math.max(0, Math.min(requiredSeconds, Number(tt.acc) || 0));
+  const gap = ls > 0 ? (now - ls) / 1000 : 0;
+  // credit only continuous activity; a longer silence means the user was away -> no credit
+  if (ls > 0 && gap >= 0 && gap <= TIMER_PING_MAX_GAP_SEC) acc = Math.min(requiredSeconds, acc + gap);
+  const paused = req.body?.pause === true;
+  const timerToken = adSign('timer', { uid: owner, tid: taskId, fs: Number(tt.fs) || now, acc, ls: paused ? 0 : now });
+  res.json({
+    success: true,
+    timerToken,
+    strict: systemSettings.strictTaskTimer !== false,
+    durationSeconds: requiredSeconds,
+    accumulatedSeconds: Math.floor(acc),
+    remainingSeconds: Math.max(0, Math.ceil(requiredSeconds - acc)),
+    done: acc >= requiredSeconds - 1,
   });
 });
 
@@ -4052,18 +4164,22 @@ app.post('/api/tasks/verify-timer', requireUserAuth, async (req: Request, res: R
   const task = dynamicTasks.find(t => t.id === taskId);
   if (!task) return res.status(404).json({ success: false, error: 'Task not found' });
 
+  if (task.verificationMethod === 'MANUAL') {
+    return res.status(400).json({ success: false, error: 'This task needs admin review. Submit your proof instead.' });
+  }
   const timerKey = `${userId}_${taskId}`;
   const requiredSeconds = Math.max(5, task.durationSeconds || 30);
   const tt = adVerify('timer', req.body?.timerToken);
   if (!tt || tt.uid !== String((req as any).verifiedUserId || userId) || tt.tid !== taskId) {
     return res.status(400).json({ success: false, error: 'Start the task first, then wait for the timer to finish.', remainingSeconds: requiredSeconds });
   }
-  const waitedSeconds = (Date.now() - Number(tt.fs)) / 1000;
+  const strictMode = systemSettings.strictTaskTimer !== false;
+  const waitedSeconds = strictMode ? (Number(tt.acc) || 0) : (Date.now() - Number(tt.fs)) / 1000;
   if (waitedSeconds < requiredSeconds - 1) {
     const remaining = Math.max(1, Math.ceil(requiredSeconds - waitedSeconds));
     return res.status(400).json({
       success: false,
-      error: `Visit verification incomplete. Full ${requiredSeconds}s required. (${remaining}s remaining)`,
+      error: `Time not completed. ${requiredSeconds}s of active time required (${remaining}s remaining). Leaving the app pauses the timer.`,
       remainingSeconds: remaining,
       accumulatedSeconds: Math.floor(waitedSeconds),
     });
@@ -4150,10 +4266,24 @@ app.post('/api/tasks/submit', requireUserAuth, async (req: Request, res: Respons
     return res.status(400).json({ success: false, error: 'Your proof is already waiting for admin review.' });
   }
 
-  const primaryProof = String(usernameOrLink || proof || '').trim();
+  const primaryProof = String(usernameOrLink || proof || '').trim().slice(0, 500);
+  if (screenshot && String(screenshot).length > 400000) {
+    return res.status(413).json({ success: false, error: 'Screenshot is too large. Please upload a smaller image.' });
+  }
 
-  // Auto-verify AUTO tasks; MANUAL tasks placed into Admin Review Queue
+  // AUTO tasks are paid ONLY when the app can really verify them (Telegram channel/group membership).
+  // Anything that cannot be verified automatically goes to the admin review queue instead of paying instantly.
+  let autoVerified = false;
   if (task.verificationMethod === 'AUTO') {
+    const tgId = Number((user as any).telegramId) || parseInt(String(userId).replace('usr_', '')) || 0;
+    const member = await verifyTelegramMembership(task.url, tgId);
+    if (member === 'not_member') {
+      return res.status(400).json({ success: false, error: 'Please join first, then try again. We could not find you in the channel.' });
+    }
+    autoVerified = member === 'member';
+  }
+
+  if (task.verificationMethod === 'AUTO' && autoVerified) {
     try {
       if (!(await claimTaskOnce(userId, taskId))) {
         return res.status(400).json({ success: false, error: 'Task already completed and rewarded' });
@@ -4205,7 +4335,7 @@ app.post('/api/tasks/submit', requireUserAuth, async (req: Request, res: Respons
       proof: primaryProof,
       usernameOrLink: primaryProof,
       screenshot: screenshot ? String(screenshot) : undefined,
-      description: description ? String(description).trim() : undefined,
+      description: description ? String(description).trim().slice(0, 1000) : undefined,
       status: 'SUBMITTED',
       rewardAmount: task.rewardAmount,
       rewardAsset: task.rewardAsset,
@@ -4214,7 +4344,7 @@ app.post('/api/tasks/submit', requireUserAuth, async (req: Request, res: Respons
     taskSubmissionsQueue.unshift(subRecord);
     scheduleSaveDatabase();
 
-    return res.json({ success: true, status: 'SUBMITTED', message: 'Proof submitted successfully. Pending admin review.' });
+    return res.json({ success: true, status: 'SUBMITTED', message: 'Submitted successfully. The reward is added after admin review.' });
   }
 });
 
@@ -5328,9 +5458,9 @@ app.get(['/api/admin/dashboard', '/admin/dashboard'], requireAdminAuth, async (_
     pendingProofSubmissions,
     systemSettings: {
       ...systemSettings,
-      spin_03_onclicka: systemSettings.spin_03_onclicka === '6153717' ? '6153717E4F' : (systemSettings.spin_03_onclicka || '6153717E4F'),
-      box_03_onclicka: systemSettings.box_03_onclicka === '6153772' ? '6153772E4F' : (systemSettings.box_03_onclicka || '6153772E4F'),
-      mining_03_onclicka: systemSettings.mining_03_onclicka === '6153774' ? '6153774E4F' : (systemSettings.mining_03_onclicka || '6153774E4F'),
+      spin_03_onclicka: String(systemSettings.spin_03_onclicka || '6153717').replace(/E4F$/i, ''),
+      box_03_onclicka: String(systemSettings.box_03_onclicka || '6153772').replace(/E4F$/i, ''),
+      mining_03_onclicka: String(systemSettings.mining_03_onclicka || '6153774').replace(/E4F$/i, ''),
     },
     recentAuditLogs: auditLogs.slice(0, 20),
   });
@@ -5423,6 +5553,9 @@ app.post(['/api/admin/settings', '/admin/settings'], requireAdminAuth, async (re
   if (updates.rewardedAdRequired !== undefined) {
     updates.rewardedAdRequired = updates.rewardedAdRequired === true || updates.rewardedAdRequired === 'true';
   }
+  if (updates.strictTaskTimer !== undefined) {
+    updates.strictTaskTimer = updates.strictTaskTimer === true || updates.strictTaskTimer === 'true';
+  }
   if (updates.miningWaterfallEnabled !== undefined) {
     updates.miningWaterfallEnabled = updates.miningWaterfallEnabled === true || updates.miningWaterfallEnabled === 'true';
   }
@@ -5436,7 +5569,44 @@ app.post(['/api/admin/settings', '/admin/settings'], requireAdminAuth, async (re
   if (updates.miningRatePerHour !== undefined) {
     const rate = Number(updates.miningRatePerHour);
     if (!isNaN(rate) && rate > 0) {
-      updates.miningRatePerHour = Math.round(rate * 10000) / 10000;
+      updates.miningRatePerHour = Math.round(Math.min(rate, 1000) * 10000) / 10000;
+    } else {
+      delete updates.miningRatePerHour;
+    }
+  }
+  // Reward tables edited from the admin panel: validate shape and amounts (admin may raise or lower them freely)
+  const cleanAmount = (v: any, fallback: number) => {
+    const n = Number(v);
+    return !isNaN(n) && n >= 0 ? Math.round(Math.min(n, 100000) * 10000) / 10000 : fallback;
+  };
+  const cleanColor = (v: any, fallback: string) => (typeof v === 'string' && /^#[0-9a-fA-F]{6}$/.test(v) ? v : fallback);
+  if (updates.spinWheelPrizes !== undefined) {
+    if (Array.isArray(updates.spinWheelPrizes) && updates.spinWheelPrizes.length >= 2) {
+      updates.spinWheelPrizes = updates.spinWheelPrizes.slice(0, 8).map((p: any, i: number) => {
+        const base = defaultSpinWheelPrizes[i % defaultSpinWheelPrizes.length];
+        const asset = p && p.asset === 'USDT' ? 'USDT' : 'E4F';
+        const amount = cleanAmount(p && p.amount, base.amount);
+        return { id: i, label: `${amount.toFixed(2)} ${asset}`, asset, amount, color: cleanColor(p && p.color, base.color) };
+      });
+    } else {
+      delete updates.spinWheelPrizes;
+    }
+  }
+  if (updates.giftBoxesConfig !== undefined) {
+    if (Array.isArray(updates.giftBoxesConfig) && updates.giftBoxesConfig.length >= 1) {
+      updates.giftBoxesConfig = updates.giftBoxesConfig.slice(0, 5).map((b: any, i: number) => {
+        const base = defaultGiftBoxesConfig[i % defaultGiftBoxesConfig.length];
+        return {
+          id: i + 1,
+          boxNumber: i + 1,
+          name: (typeof (b && b.name) === 'string' && b.name.trim() ? b.name.trim() : base.name).slice(0, 40),
+          rewardAsset: b && b.rewardAsset === 'USDT' ? 'USDT' : 'E4F',
+          rewardAmount: cleanAmount(b && b.rewardAmount, base.rewardAmount),
+          color: cleanColor(b && b.color, base.color),
+        };
+      });
+    } else {
+      delete updates.giftBoxesConfig;
     }
   }
   if (updates.miningAdDurationSeconds !== undefined) {
@@ -5475,14 +5645,15 @@ app.post(['/api/admin/settings', '/admin/settings'], requireAdminAuth, async (re
       }
     }
   }
-  if (updates.spin_03_onclicka === '6153717') updates.spin_03_onclicka = '6153717E4F';
-  if (updates.box_03_onclicka === '6153772') updates.box_03_onclicka = '6153772E4F';
-  if (updates.mining_03_onclicka === '6153774') updates.mining_03_onclicka = '6153774E4F';
+  if (updates.spin_03_onclicka === '6153717') updates.spin_03_onclicka = '6153717';
+  if (updates.box_03_onclicka === '6153772') updates.box_03_onclicka = '6153772';
+  if (updates.mining_03_onclicka === '6153774') updates.mining_03_onclicka = '6153774';
   updates.monetagDirectLink = '';
 
   Object.assign(systemSettings, updates);
-  // Ads can never be switched off and slot networks/ids are always validated
-  systemSettings.rewardedAdRequired = true;
+  // Admin can switch the MINING ad gate ON/OFF. Spin and Gift Box ads are always required.
+  systemSettings.rewardedAdRequired = systemSettings.rewardedAdRequired !== false;
+  systemSettings.strictTaskTimer = systemSettings.strictTaskTimer !== false;
   systemSettings.rewardSpinAdRequired = true;
   systemSettings.giftBoxAdRequired = true;
   normalizeAdSlotSettings();
@@ -5495,14 +5666,23 @@ app.post(['/api/admin/settings', '/admin/settings'], requireAdminAuth, async (re
     } catch {}
   }
 
+  let persistError = '';
   if (supabase) {
     try {
-      await supabase.from('system_settings').upsert({
+      let { error: upErr } = await supabase.from('system_settings').upsert({
         id: 'global_settings',
         settings: systemSettings,
         updated_at: new Date().toISOString(),
       });
-    } catch (dbErr) {
+      if (upErr) {
+        // Older table without the updated_at column: retry with the two required columns only.
+        const retry = await supabase.from('system_settings').upsert({ id: 'global_settings', settings: systemSettings });
+        upErr = retry.error;
+      }
+      if (upErr) persistError = upErr.message || 'database write failed';
+      else settingsLoadedAt = Date.now();
+    } catch (dbErr: any) {
+      persistError = dbErr?.message || 'database write failed';
       console.warn('[Supabase] Warning syncing system settings to database:', dbErr);
     }
   }
@@ -5516,7 +5696,14 @@ app.post(['/api/admin/settings', '/admin/settings'], requireAdminAuth, async (re
     timestamp: Date.now(),
   });
 
-  res.json({ success: true, settings: systemSettings });
+  if (persistError) {
+    return res.status(500).json({
+      success: false,
+      error: 'Settings were NOT saved to the database (' + persistError + '). Run the latest SQL file in Supabase, then try again.',
+      settings: systemSettings,
+    });
+  }
+  res.json({ success: true, persisted: true, settings: systemSettings });
 });
 
 app.get('/api/admin/users', requireAdminAuth, async (_req: Request, res: Response) => {
@@ -5952,19 +6139,45 @@ app.get('/api/admin/tasks', requireAdminAuth, (_req: Request, res: Response) => 
   res.json({ tasks: dynamicTasks });
 });
 
+function cleanTaskFields(src: any, base?: Partial<DynamicTask>): Partial<DynamicTask> {
+  const out: any = {};
+  if (src.title !== undefined) out.title = String(src.title || '').trim().slice(0, 120);
+  if (src.description !== undefined) out.description = String(src.description || '').trim().slice(0, 500);
+  if (src.platform !== undefined) out.platform = String(src.platform || 'TELEGRAM').trim().toUpperCase().slice(0, 30);
+  if (src.url !== undefined) {
+    const u = String(src.url || '').trim().slice(0, 500);
+    out.url = /^https?:\/\//i.test(u) ? u : (base?.url || 'https://t.me/E4F_Exchange_Official');
+  }
+  if (src.rewardAsset !== undefined) out.rewardAsset = src.rewardAsset === 'USDT' ? 'USDT' : 'E4F';
+  if (src.rewardAmount !== undefined) {
+    const n = Number(src.rewardAmount);
+    out.rewardAmount = isFinite(n) && n > 0 ? Math.round(Math.min(n, 100000) * 10000) / 10000 : (base?.rewardAmount || 1);
+  }
+  if (src.verificationMethod !== undefined) {
+    out.verificationMethod = ['AUTO', 'MANUAL', 'TIMER'].includes(src.verificationMethod) ? src.verificationMethod : 'MANUAL';
+  }
+  const method = out.verificationMethod || base?.verificationMethod;
+  if (src.durationSeconds !== undefined || method === 'TIMER') {
+    const d = parseInt(String(src.durationSeconds ?? base?.durationSeconds ?? 30));
+    out.durationSeconds = method === 'TIMER' || (isFinite(d) && d > 0) ? Math.max(5, Math.min(3600, isFinite(d) ? d : 30)) : undefined;
+  }
+  return out;
+}
+
 app.post('/api/admin/tasks', requireAdminAuth, (req: Request, res: Response) => {
-  const { title, description, platform, url, rewardAsset, rewardAmount, verificationMethod, durationSeconds } = req.body;
+  const fields: any = cleanTaskFields(req.body || {});
+  if (!fields.title) return res.status(400).json({ success: false, error: 'Task title is required' });
   const newTask: DynamicTask = {
-    id: `task_${Date.now()}`,
-    title,
-    description,
-    platform: platform || 'TELEGRAM',
-    url: url || 'https://t.me/E4F_Exchange_Official',
-    rewardAsset: rewardAsset === 'USDT' ? 'USDT' : 'E4F',
-    rewardAmount: parseFloat(rewardAmount) || 1.0,
+    id: `task_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+    title: fields.title,
+    description: fields.description || '',
+    platform: fields.platform || 'TELEGRAM',
+    url: fields.url || 'https://t.me/E4F_Exchange_Official',
+    rewardAsset: fields.rewardAsset || 'E4F',
+    rewardAmount: fields.rewardAmount || 1.0,
     status: 'AVAILABLE',
-    verificationMethod: verificationMethod || 'AUTO',
-    durationSeconds: (verificationMethod === 'TIMER' || durationSeconds) ? Math.max(5, parseInt(durationSeconds) || 30) : undefined,
+    verificationMethod: fields.verificationMethod || 'AUTO',
+    durationSeconds: fields.durationSeconds,
   };
   dynamicTasks.push(newTask);
 
@@ -5985,7 +6198,9 @@ app.put('/api/admin/tasks/:id', requireAdminAuth, (req: Request, res: Response) 
   const task = dynamicTasks.find(t => t.id === id);
   if (!task) return res.status(404).json({ success: false, error: 'Task not found' });
 
-  Object.assign(task, req.body);
+  const fields: any = cleanTaskFields(req.body || {}, task);
+  if (fields.title === '') delete fields.title;
+  Object.assign(task, fields);
   res.json({ success: true, task });
 });
 
