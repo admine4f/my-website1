@@ -42,6 +42,27 @@ const MONETAG_LAST_KEY = 'E4F_monetag_last_shown';
 let globalAdBusy = false;
 let monetagLastShownMem = 0;
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
+
+// After an ad has FINISHED, remove any ad-network overlay that is still left on screen
+// (outside our own #root), so the ad closes by itself and the reward flow continues.
+const closeLeftoverAdOverlays = () => {
+  try {
+    const sel = [
+      'iframe[src*="onclckvd"]', 'iframe[src*="onclicka"]', 'iframe[src*="libtl.com"]',
+      'iframe[src*="richinfo"]', 'iframe[src*="highperformanceformat"]',
+      '[id*="cdtma" i]', '[class*="cdtma" i]', '[id*="onclicka" i]', '[class*="onclicka" i]',
+      '[id*="monetag" i]', '[class*="monetag" i]', '[class*="richpartners"]', '[id*="richpartners"]',
+      '[id*="richads" i]', '[class*="richads" i]',
+    ].join(',');
+    document.querySelectorAll(sel).forEach((el) => {
+      if ((el as HTMLElement).closest('#root')) return; // never touch our own app
+      if (el === document.body || el === document.documentElement) return;
+      (el as HTMLElement).remove();
+    });
+    // restore page scrolling in case a network locked it
+    document.body.style.overflow = '';
+  } catch { /* ignore */ }
+};
 function monetagCooldownLeftMs(): number {
   let last = monetagLastShownMem;
   try { last = Math.max(last, Number(localStorage.getItem(MONETAG_LAST_KEY) || 0)); } catch {}
@@ -501,7 +522,9 @@ export const UnifiedRewardedAdModal: React.FC<UnifiedRewardedAdModalProps> = ({
 
     if (outcome === 'reward' && finalTier) {
       setMiningStep(null);
-      // All required ads were really shown -> automatic reward (no waiting time)
+      // All required ads were really shown -> the ad closes by itself and the reward is given automatically
+      closeLeftoverAdOverlays();
+      setTimeout(closeLeftoverAdOverlays, 800);
       setStatusNote('AD FINISHED • VERIFYING');
       await serverStartPromise; // make sure the server registered the start before the completion call
       if (!watchTicketRef.current) {
