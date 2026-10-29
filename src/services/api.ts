@@ -821,13 +821,13 @@ export const api = {
     throw new Error((data && data.error) || 'Could not start mining. Please try again.');
   },
 
-  async claimMiningReward(userId: string, sessionId: string): Promise<{ success: boolean; rewardAmount: number; asset: string; newBalance: number }> {
+  async claimMiningReward(userId: string, sessionId: string, adSessionId?: string, claimToken?: string): Promise<{ success: boolean; rewardAmount: number; asset: string; newBalance: number; boosted?: boolean }> {
     let res: Response;
     try {
       res = await fetch('/api/mining/claim', {
         method: 'POST',
         headers: api.getUserAuthHeaders(),
-        body: JSON.stringify({ userId, sessionId }),
+        body: JSON.stringify({ userId, sessionId, adSessionId, claimToken }),
       });
     } catch {
       throw new Error('Network error. Please check your connection and try again.');
