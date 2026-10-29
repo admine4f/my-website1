@@ -124,6 +124,7 @@ export interface MiningStats {
   seasonEndDate: number; // 2028-02-28
   seasonDaysRemaining: number;
   adRequired?: boolean;
+  claimBoostEnabled?: boolean;
   adProvider?: 'ADSTERRA' | 'MONETAG' | 'UNITY' | 'SIMULATOR';
   adDurationSeconds?: number;
   adsterraDirectLink?: string;
