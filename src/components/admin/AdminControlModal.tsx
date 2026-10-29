@@ -1705,17 +1705,19 @@ export const AdminControlModal: React.FC<AdminControlModalProps> = ({ onClose })
                         <div className="text-[10px] text-slate-400">Configure 5 daily spins and 8 prize amounts</div>
                       </div>
                       <div className="flex items-center gap-2">
-                        <span className="text-[10px] text-slate-400 font-semibold">Ad Gate (always on)</span>
+                        <span className={`text-[10px] font-semibold ${rewardSpinAdRequired ? 'text-emerald-400' : 'text-slate-400'}`}>
+                          {rewardSpinAdRequired ? 'Ad Gate ON' : 'Ad Gate OFF'}
+                        </span>
                         <button
-                          onClick={() => {}}
-                          title="Spin ads are always required"
-                          className={`w-11 h-6 rounded-full transition-colors relative cursor-not-allowed opacity-70 ${
-                            'bg-amber-500'
+                          onClick={() => setRewardSpinAdRequired(!rewardSpinAdRequired)}
+                          title="Turn the Spin ad ON or OFF (press Save to apply)"
+                          className={`w-11 h-6 rounded-full transition-colors relative cursor-pointer ${
+                            rewardSpinAdRequired ? 'bg-amber-500' : 'bg-slate-700'
                           }`}
                         >
                           <div
                             className={`w-4 h-4 rounded-full bg-slate-950 transition-transform absolute top-1 ${
-                              'right-1'
+                              rewardSpinAdRequired ? 'right-1' : 'left-1'
                             }`}
                           />
                         </button>
@@ -1827,17 +1829,19 @@ export const AdminControlModal: React.FC<AdminControlModalProps> = ({ onClose })
                         <div className="text-[10px] text-slate-400">Configure reward amounts and assets per mystery box</div>
                       </div>
                       <div className="flex items-center gap-2">
-                        <span className="text-[10px] text-slate-400 font-semibold">Ad Gate (always on)</span>
+                        <span className={`text-[10px] font-semibold ${giftBoxAdRequired ? 'text-emerald-400' : 'text-slate-400'}`}>
+                          {giftBoxAdRequired ? 'Ad Gate ON' : 'Ad Gate OFF'}
+                        </span>
                         <button
-                          onClick={() => {}}
-                          title="Gift Box ads are always required"
-                          className={`w-11 h-6 rounded-full transition-colors relative cursor-not-allowed opacity-70 ${
-                            'bg-amber-500'
+                          onClick={() => setGiftBoxAdRequired(!giftBoxAdRequired)}
+                          title="Turn the Gift Box ad ON or OFF (press Save to apply)"
+                          className={`w-11 h-6 rounded-full transition-colors relative cursor-pointer ${
+                            giftBoxAdRequired ? 'bg-amber-500' : 'bg-slate-700'
                           }`}
                         >
                           <div
                             className={`w-4 h-4 rounded-full bg-slate-950 transition-transform absolute top-1 ${
-                              'right-1'
+                              giftBoxAdRequired ? 'right-1' : 'left-1'
                             }`}
                           />
                         </button>
