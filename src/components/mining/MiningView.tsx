@@ -8,6 +8,7 @@ import { api } from '../../services/api';
 export const MiningView: React.FC = () => {
   const { user, balances, activeMiningSession, miningStats, refreshMining, refreshProfile, addToast } = useApp();
   const [showAdModal, setShowAdModal] = useState(false);
+  const [showClaimAdModal, setShowClaimAdModal] = useState(false);
   const [loadingAction, setLoadingAction] = useState(false);
   const [historyList, setHistoryList] = useState<any[]>([]);
   const [showHistory, setShowHistory] = useState(false);
@@ -139,14 +140,14 @@ export const MiningView: React.FC = () => {
   };
 
   // Handle Manual Claim Reward
-  const handleClaimReward = async () => {
+  const handleClaimReward = async (adSessionId?: string, claimToken?: string) => {
     if (!user || !activeMiningSession) return;
     setLoadingAction(true);
     try {
-      const res = await api.claimMiningReward(user.id, activeMiningSession.id);
+      const res = await api.claimMiningReward(user.id, activeMiningSession.id, adSessionId, claimToken);
       if (res.success) {
         addToast(
-          'Reward Claimed!',
+          res.boosted ? 'Double Reward Claimed!' : 'Reward Claimed!',
           `+${res.rewardAmount.toFixed(2)} E4F added to your Pre-Listing Balance.`,
           'success'
         );
@@ -160,8 +161,28 @@ export const MiningView: React.FC = () => {
     }
   };
 
+  const handleClaimAdComplete = async (adSessionId: string, claimToken: string) => {
+    setShowClaimAdModal(false);
+    await handleClaimReward(adSessionId, claimToken);
+  };
+
   return (
     <div className="flex flex-col gap-4 pb-24 pt-2 px-4 max-w-md mx-auto">
+      {/* Optional ad at claim time: watching the full ad doubles the reward */}
+      {showClaimAdModal && user && (
+        <UnifiedRewardedAdModal
+          userId={user.id}
+          actionType="MINING"
+          targetId={1}
+          durationSeconds={miningStats?.miningAdDurationSeconds || miningStats?.adDurationSeconds || 30}
+          title="Double Your Mining Reward"
+          description="Watch the full ad to receive 2x your mined E4F."
+          rewardHint="2x Mining Reward"
+          onComplete={handleClaimAdComplete}
+          onCancel={() => setShowClaimAdModal(false)}
+        />
+      )}
+
       {/* Rewarded Ad Modal with Dynamic Network & Waterfall (RichAds, Monetag, OnClickA) */}
       {showAdModal && user && (
         <UnifiedRewardedAdModal
@@ -306,14 +327,26 @@ export const MiningView: React.FC = () => {
 
           {/* Main Action Button */}
           {isMiningCompleted ? (
-            <button
-              onClick={handleClaimReward}
-              disabled={loadingAction}
-              className="w-full py-3.5 px-6 rounded-2xl bg-gradient-to-r from-emerald-500 to-emerald-600 hover:from-emerald-400 hover:to-emerald-500 text-slate-950 font-black text-sm shadow-xl shadow-emerald-500/20 flex items-center justify-center gap-2 transition-transform active:scale-95 cursor-pointer"
-            >
-              <CheckCircle2 className="w-5 h-5 text-slate-950" />
-              <span>CLAIM +{((activeMiningSession?.estimatedReward) || (miningStats?.miningRatePerHour ?? 0.25) * 8).toFixed(2)} E4F REWARD</span>
-            </button>
+            <div className="w-full flex flex-col gap-2">
+              {miningStats?.claimBoostEnabled !== false && (
+                <button
+                  onClick={() => setShowClaimAdModal(true)}
+                  disabled={loadingAction}
+                  className="w-full py-3.5 px-6 rounded-2xl bg-gradient-to-r from-amber-400 to-amber-500 hover:from-amber-300 hover:to-amber-400 text-slate-950 font-black text-sm shadow-xl shadow-amber-500/25 flex items-center justify-center gap-2 transition-transform active:scale-95 cursor-pointer"
+                >
+                  <Play className="w-5 h-5 text-slate-950" />
+                  <span>WATCH AD &amp; CLAIM +{(((activeMiningSession?.estimatedReward) || (miningStats?.miningRatePerHour ?? 0.25) * 8) * 2).toFixed(2)} E4F (2x)</span>
+                </button>
+              )}
+              <button
+                onClick={() => handleClaimReward()}
+                disabled={loadingAction}
+                className="w-full py-3.5 px-6 rounded-2xl bg-gradient-to-r from-emerald-500 to-emerald-600 hover:from-emerald-400 hover:to-emerald-500 text-slate-950 font-black text-sm shadow-xl shadow-emerald-500/20 flex items-center justify-center gap-2 transition-transform active:scale-95 cursor-pointer"
+              >
+                <CheckCircle2 className="w-5 h-5 text-slate-950" />
+                <span>CLAIM +{((activeMiningSession?.estimatedReward) || (miningStats?.miningRatePerHour ?? 0.25) * 8).toFixed(2)} E4F REWARD</span>
+              </button>
+            </div>
           ) : isMiningActive ? (
             <div className="w-full py-3 px-6 rounded-2xl bg-slate-900/80 border border-amber-500/30 text-amber-300 font-bold text-xs flex items-center justify-center gap-2">
               <div className="w-2 h-2 rounded-full bg-amber-400 animate-ping" />
