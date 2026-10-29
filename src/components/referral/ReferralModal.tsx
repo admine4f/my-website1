@@ -113,7 +113,7 @@ export const ReferralModal: React.FC<ReferralModalProps> = ({ onClose }) => {
             <span className="text-xs font-bold text-white">Direct Bonus: {referralBonusUSDT} USDT / Friend</span>
           </div>
           <p className="text-[11px] text-slate-300 leading-snug">
-            Receive +{referralBonusUSDT} USDT once your invited friend starts mining and completes the welcome quest!
+            Receive +{referralBonusUSDT} USDT in your Spot Balance automatically when your invited friend mines 30 days in a row. Until then the bonus stays locked.
           </p>
         </div>
 
