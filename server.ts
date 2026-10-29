@@ -678,31 +678,32 @@ function getUtcDates() {
 }
 
 async function loadUserDailyCheckIn(userId: string): Promise<UserCheckInState> {
-  const cached = userDailyCheckIns.get(userId);
-  if (cached) return cached;
+  // With a database, ALWAYS read the saved state (serverless instances do not share memory).
+  if (!supabase) {
+    const cached = userDailyCheckIns.get(userId);
+    if (cached) return cached;
+  }
 
   if (supabase) {
-    try {
-      const { data, error } = await supabase
-        .from('e4f_daily_checkins')
-        .select('*')
-        .eq('user_id', userId)
-        .maybeSingle();
-
-      if (!error && data) {
-        const currentDay = Number(data.current_day) || 1;
-        const check: UserCheckInState = {
-          currentStreak: currentDay,
-          currentDay,
-          lastDate: data.last_claim_date || '',
-          streakCount: Number(data.streak_count) || 0,
-          claimedDays: currentDay ? Array.from({ length: currentDay }, (_, i) => i + 1) : [],
-        };
-        userDailyCheckIns.set(userId, check);
-        return check;
-      }
-    } catch (e: any) {
-      console.warn('[Supabase] Warning reading e4f_daily_checkins:', e?.message);
+    const { data, error } = await supabase
+      .from('e4f_daily_checkins')
+      .select('*')
+      .eq('user_id', userId)
+      .maybeSingle();
+    // A read error must NOT look like "never claimed" (that would allow claiming again)
+    if (error) throw new Error(`check-in read failed: ${error.message}`);
+    if (data) {
+      const currentDay = Number(data.current_day) || 1;
+      const lastRaw = data.last_claim_date ? String(data.last_claim_date).slice(0, 10) : '';
+      const check: UserCheckInState = {
+        currentStreak: currentDay,
+        currentDay,
+        lastDate: lastRaw,
+        streakCount: Number(data.streak_count) || 0,
+        claimedDays: currentDay ? Array.from({ length: currentDay }, (_, i) => i + 1) : [],
+      };
+      userDailyCheckIns.set(userId, check);
+      return check;
     }
   }
 
@@ -3566,7 +3567,9 @@ app.get('/api/mining/:userId/history', requireUserAuth, (req: Request, res: Resp
 // Daily Check-in (7-Day Consecutive Streak & Rewards Progression with Supabase e4f_daily_checkins)
 app.get('/api/rewards/:userId/daily-checkin', requireUserAuth, async (req: Request, res: Response) => {
   const { userId } = req.params;
-  const checkIn = await loadUserDailyCheckIn(userId);
+  let checkIn: UserCheckInState;
+  try { checkIn = await loadUserDailyCheckIn(userId); }
+  catch (e: any) { return res.status(503).json({ success: false, error: 'Could not load check-in. Please try again.' }); }
   const { todayUtc, yesterdayUtc } = getUtcDates();
 
   const todayClaimed = Boolean(checkIn.lastDate && checkIn.lastDate === todayUtc);
@@ -3613,7 +3616,9 @@ app.post('/api/rewards/daily-checkin/claim', requireUserAuth, async (req: Reques
   const { userId } = req.body;
   if (!userId) return res.status(400).json({ success: false, error: 'User ID is required' });
 
-  const checkIn = await loadUserDailyCheckIn(userId);
+  let checkIn: UserCheckInState;
+  try { checkIn = await loadUserDailyCheckIn(userId); }
+  catch (e: any) { return res.status(503).json({ success: false, error: 'Could not load check-in. Please try again.' }); }
   const { todayUtc, yesterdayUtc } = getUtcDates();
 
   if (checkIn.lastDate === todayUtc) {
@@ -3640,7 +3645,28 @@ app.post('/api/rewards/daily-checkin/claim', requireUserAuth, async (req: Reques
     newStreak = 1;
   }
 
-  // Update in-memory state immediately for instant response
+  const rewards = (systemSettings.dailyCheckInRewards && systemSettings.dailyCheckInRewards.length > 0)
+    ? systemSettings.dailyCheckInRewards
+    : defaultDailyCheckInRewards;
+
+  const reward = rewards.find(r => r.day === targetDay) || rewards[targetDay - 1] || rewards[0];
+
+  // SAVE THE CLAIM FIRST (and wait for it). If it cannot be saved, nothing is paid,
+  // otherwise the same day could be claimed again after logging out and in.
+  if (supabase) {
+    const { error: saveErr } = await supabase.from('e4f_daily_checkins').upsert({
+      user_id: userId,
+      current_day: targetDay,
+      last_claim_date: todayUtc,
+      streak_count: newStreak,
+      updated_at: new Date().toISOString(),
+    }, { onConflict: 'user_id' });
+    if (saveErr) {
+      console.warn('[Supabase Checkin Error]:', saveErr.message);
+      return res.status(503).json({ success: false, error: 'Could not save your check-in. Please try again.' });
+    }
+  }
+
   checkIn.currentDay = targetDay;
   checkIn.currentStreak = targetDay;
   checkIn.lastDate = todayUtc;
@@ -3648,36 +3674,14 @@ app.post('/api/rewards/daily-checkin/claim', requireUserAuth, async (req: Reques
   checkIn.claimedDays = Array.from({ length: targetDay }, (_, i) => i + 1);
   userDailyCheckIns.set(userId, checkIn);
 
-  const rewards = (systemSettings.dailyCheckInRewards && systemSettings.dailyCheckInRewards.length > 0)
-    ? systemSettings.dailyCheckInRewards
-    : defaultDailyCheckInRewards;
-
-  const reward = rewards.find(r => r.day === targetDay) || rewards[targetDay - 1] || rewards[0];
-
-  let userBalance = balances.get(userId);
-  if (!userBalance) {
-    userBalance = await getSupabaseBalance(userId);
-  }
+  let userBalance = await getSupabaseBalance(userId);
   if (reward.asset === 'USDT') {
     userBalance.usdt = Math.round((userBalance.usdt + reward.amount) * 1000000) / 1000000;
   } else {
     userBalance.e4f = Math.round((userBalance.e4f + reward.amount) * 1000000) / 1000000;
   }
   balances.set(userId, userBalance);
-
-  // Background persistence without blocking response
-  if (supabase) {
-    (supabase.from('e4f_daily_checkins').upsert({
-      user_id: userId,
-      current_day: targetDay,
-      last_claim_date: todayUtc,
-      streak_count: newStreak,
-      updated_at: new Date().toISOString(),
-    }, { onConflict: 'user_id' }) as PromiseLike<any>).then(() => {}, (err: any) => {
-      console.warn('[Supabase Checkin Error]:', err?.message);
-    });
-  }
-  setSupabaseBalance(userId, userBalance).catch(() => {});
+  await setSupabaseBalance(userId, userBalance).catch(() => {});
 
   const checkinTx: TxRecord = {
     id: `tx_${Date.now()}_checkin`,
@@ -3725,7 +3729,7 @@ app.get('/api/rewards/:userId/spin-status', requireUserAuth, async (req: Request
       maxSpins,
       spinsRemainingToday: spinsRemaining,
       nextSpinSlot: firstUnusedSlot(used, maxSpins) || null,
-      adRequired: true,
+      adRequired: systemSettings.rewardSpinAdRequired !== false,
       prizes: activePrizes,
       zoneId: resolveAdId('SPIN', 2),
       provider: 'RichAds',
@@ -3753,16 +3757,19 @@ app.post(['/api/rewards/spin', '/api/rewards/spin/claim', '/rewards/spin', '/rew
       });
     }
 
-    // 2. A finished rewarded ad of THIS slot is ALWAYS required (cannot be switched off)
-    if (!adSessionId || !claimToken) {
-      return res.status(403).json({
-        success: false,
-        error: 'Spin locked. Rewarded ad completion is strictly required for each spin.',
-      });
-    }
-    const redeemed = await redeemAdClaim(userId, adSessionId, claimToken, 'SPIN', slot);
-    if (!redeemed.ok) {
-      return res.status(redeemed.status || 403).json({ success: false, error: redeemed.error || 'Ad verification failed' });
+    // 2. A finished rewarded ad of THIS slot is required while the admin's Spin ad gate is ON.
+    //    If the admin switched the gate OFF, the spin runs without an ad (daily limit still applies).
+    if (systemSettings.rewardSpinAdRequired !== false) {
+      if (!adSessionId || !claimToken) {
+        return res.status(403).json({
+          success: false,
+          error: 'Spin locked. Rewarded ad completion is strictly required for each spin.',
+        });
+      }
+      const redeemed = await redeemAdClaim(userId, adSessionId, claimToken, 'SPIN', slot);
+      if (!redeemed.ok) {
+        return res.status(redeemed.status || 403).json({ success: false, error: redeemed.error || 'Ad verification failed' });
+      }
     }
 
     // 3. Claim the slot atomically (a duplicate / parallel request loses here and gets nothing)
@@ -3850,7 +3857,7 @@ app.get('/api/rewards/:userId/gift-boxes', requireUserAuth, async (req: Request,
       boxesUsedToday: opened.length,
       maxDailyBoxes: maxBoxes,
       boxesRemainingToday,
-      adRequired: true,
+      adRequired: systemSettings.giftBoxAdRequired !== false,
       zoneId: resolveAdId('GIFT_BOX', 2),
       provider: 'RichAds',
     });
@@ -3887,16 +3894,19 @@ app.post(['/api/rewards/gift-box/open', '/api/rewards/gift-box/claim', '/rewards
       });
     }
 
-    // 2. A finished rewarded ad of THIS box slot is ALWAYS required
-    if (!adSessionId || !claimToken) {
-      return res.status(403).json({
-        success: false,
-        error: 'Box locked. Rewarded ad completion is strictly required to unlock this gift box.',
-      });
-    }
-    const redeemed = await redeemAdClaim(userId, adSessionId, claimToken, 'GIFT_BOX', numBoxId);
-    if (!redeemed.ok) {
-      return res.status(redeemed.status || 403).json({ success: false, error: redeemed.error || 'Ad verification failed' });
+    // 2. A finished rewarded ad of THIS box slot is required while the admin's Gift Box ad gate is ON.
+    //    If the admin switched the gate OFF, the box opens without an ad (daily limit still applies).
+    if (systemSettings.giftBoxAdRequired !== false) {
+      if (!adSessionId || !claimToken) {
+        return res.status(403).json({
+          success: false,
+          error: 'Box locked. Rewarded ad completion is strictly required to unlock this gift box.',
+        });
+      }
+      const redeemed = await redeemAdClaim(userId, adSessionId, claimToken, 'GIFT_BOX', numBoxId);
+      if (!redeemed.ok) {
+        return res.status(redeemed.status || 403).json({ success: false, error: redeemed.error || 'Ad verification failed' });
+      }
     }
 
     // 3. Atomically claim this box for today
@@ -5553,6 +5563,12 @@ app.post(['/api/admin/settings', '/admin/settings'], requireAdminAuth, async (re
   if (updates.rewardedAdRequired !== undefined) {
     updates.rewardedAdRequired = updates.rewardedAdRequired === true || updates.rewardedAdRequired === 'true';
   }
+  if (updates.rewardSpinAdRequired !== undefined) {
+    updates.rewardSpinAdRequired = updates.rewardSpinAdRequired === true || updates.rewardSpinAdRequired === 'true';
+  }
+  if (updates.giftBoxAdRequired !== undefined) {
+    updates.giftBoxAdRequired = updates.giftBoxAdRequired === true || updates.giftBoxAdRequired === 'true';
+  }
   if (updates.strictTaskTimer !== undefined) {
     updates.strictTaskTimer = updates.strictTaskTimer === true || updates.strictTaskTimer === 'true';
   }
@@ -5651,11 +5667,11 @@ app.post(['/api/admin/settings', '/admin/settings'], requireAdminAuth, async (re
   updates.monetagDirectLink = '';
 
   Object.assign(systemSettings, updates);
-  // Admin can switch the MINING ad gate ON/OFF. Spin and Gift Box ads are always required.
+  // Admin can switch the MINING, SPIN and GIFT BOX ad gates ON/OFF.
   systemSettings.rewardedAdRequired = systemSettings.rewardedAdRequired !== false;
   systemSettings.strictTaskTimer = systemSettings.strictTaskTimer !== false;
-  systemSettings.rewardSpinAdRequired = true;
-  systemSettings.giftBoxAdRequired = true;
+  systemSettings.rewardSpinAdRequired = systemSettings.rewardSpinAdRequired !== false && String(systemSettings.rewardSpinAdRequired) !== 'false';
+  systemSettings.giftBoxAdRequired = systemSettings.giftBoxAdRequired !== false && String(systemSettings.giftBoxAdRequired) !== 'false';
   normalizeAdSlotSettings();
 
   try {
