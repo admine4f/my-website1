@@ -431,6 +431,7 @@ const systemSettings = {
   miningDurationHours: 8,
   rewardedAdRequired: true,
   strictTaskTimer: true,
+  miningClaimBoostEnabled: true,
   adMinWatchSeconds: 5,
   adMiningDurationSeconds: 30,
   miningAdDurationSeconds: 30,
@@ -445,6 +446,7 @@ const systemSettings = {
   welcomeBonusUSDT: 25,
   welcomeBonusE4F: 10,
   referralBonusUSDT: 5,
+  referralBonusDays: 30,
   e4fListingStatus: 'PENDING_LISTING',
   e4fPlannedListingDate: '2028-02-28',
   e4fPlannedTargetPriceRange: 'Not Listed Yet',
@@ -2470,6 +2472,7 @@ app.get(['/api/system/public-settings', '/api/system/settings', '/system/public-
     adProvider: systemSettings.adProvider || 'RichAds',
     rewardedAdRequired: systemSettings.rewardedAdRequired !== false,
     adRequired: systemSettings.rewardedAdRequired !== false,
+    claimBoostEnabled: systemSettings.miningClaimBoostEnabled !== false,
     adDurationSeconds: systemSettings.miningAdDurationSeconds || systemSettings.adMiningDurationSeconds || 30,
     miningAdDurationSeconds: systemSettings.miningAdDurationSeconds || systemSettings.adMiningDurationSeconds || 30,
     spinAdDurationSeconds: systemSettings.spinAdDurationSeconds || 30,
@@ -2547,7 +2550,7 @@ async function computeMiningStreak(userId: string, now: number): Promise<number>
         .from('mining_sessions')
         .select('start_time')
         .eq('user_id', userId)
-        .gte('start_time', now - (TRUSTED_MINER_DAYS + 5) * DAY);
+        .gte('start_time', now - (Math.max(TRUSTED_MINER_DAYS, Number(systemSettings.referralBonusDays) || 30) + 5) * DAY);
       (data || []).forEach((r: any) => days.add(Math.floor(Number(r.start_time) / DAY)));
     } catch {}
   }
@@ -2671,6 +2674,7 @@ app.get('/api/mining/:userId/status', requireUserAuth, async (req: Request, res:
     boostedMiningRatePerHour: boostedRate,
     durationHours: systemSettings.miningDurationHours,
     adRequired: systemSettings.rewardedAdRequired !== false,
+    claimBoostEnabled: systemSettings.miningClaimBoostEnabled !== false,
     adDurationSeconds: systemSettings.miningAdDurationSeconds || systemSettings.adMiningDurationSeconds || 30,
     miningAdDurationSeconds: systemSettings.miningAdDurationSeconds || systemSettings.adMiningDurationSeconds || 30,
     spinAdDurationSeconds: systemSettings.spinAdDurationSeconds || 30,
@@ -3359,7 +3363,17 @@ const handleStartMining = async (req: Request, res: Response) => {
         } catch {}
       }
 
+      // The referral bonus stays LOCKED until the invited friend has mined for N consecutive days (default 30).
+      const requiredDays = Math.max(1, Math.floor(Number(systemSettings.referralBonusDays) || 30));
+      let friendStreak = 0;
       if (!alreadyAwarded) {
+        friendStreak = await computeMiningStreak(userId, now);
+        if (refRecord && friendStreak > (refRecord.minedDays || 0) && friendStreak < requiredDays) {
+          refRecord.minedDays = friendStreak;
+        }
+      }
+
+      if (!alreadyAwarded && friendStreak >= requiredDays) {
         const bonusUSDT = systemSettings.referralBonusUSDT !== undefined ? systemSettings.referralBonusUSDT : 5.0;
 
         // 1. Credit referrer balance atomically
@@ -3379,7 +3393,7 @@ const handleStartMining = async (req: Request, res: Response) => {
           source: 'REFERRAL_BONUS',
           status: 'COMPLETED',
           timestamp: Date.now(),
-          note: `Referral bonus: ${bonusUSDT} USDT credited as invited friend (${friendName}) started mining`,
+          note: `Referral bonus: ${bonusUSDT} USDT credited as invited friend (${friendName}) mined ${requiredDays} days in a row`,
         };
         await recordTransaction(bonusTx);
 
@@ -3387,7 +3401,7 @@ const handleStartMining = async (req: Request, res: Response) => {
         if (refRecord) {
           refRecord.status = 'QUALIFIED';
           refRecord.rewardEarned = bonusUSDT;
-          refRecord.minedDays = Math.max(refRecord.minedDays || 0, 1);
+          refRecord.minedDays = Math.max(refRecord.minedDays || 0, friendStreak);
         } else {
           referralHistory.push({
             id: `ref_${Date.now()}_${userId}`,
@@ -3397,7 +3411,7 @@ const handleStartMining = async (req: Request, res: Response) => {
             referredName: friendName,
             timestamp: Date.now(),
             status: 'QUALIFIED',
-            minedDays: 1,
+            minedDays: friendStreak,
             rewardEarned: bonusUSDT,
           });
         }
@@ -3441,7 +3455,7 @@ app.post('/api/start-mining', requireUserAuth, handleStartMining);
 // Claim Mining Reward (Manual Claim after 8 Hours)
 app.post('/api/mining/claim', requireUserAuth, async (req: Request, res: Response) => {
   const userId = String((req as any).verifiedUserId || '');
-  const { sessionId } = req.body || {};
+  const { sessionId, adSessionId, claimToken } = req.body || {};
   const now = Date.now();
   if (!userId) return res.status(401).json({ success: false, error: 'Authentication required' });
 
@@ -3486,6 +3500,18 @@ app.post('/api/mining/claim', requireUserAuth, async (req: Request, res: Respons
     return res.status(400).json({ success: false, error: `Mining session still in progress. ${remainingSec}s remaining` });
   }
 
+  // OPTIONAL double reward: if the admin has the claim boost ON and the user finished a rewarded ad,
+  // the reward is doubled. Without an ad the normal reward is paid (the claim is never blocked).
+  let payoutMultiplier = 1;
+  if (systemSettings.miningClaimBoostEnabled !== false && adSessionId && claimToken) {
+    const redeemedBoost = await redeemAdClaim(userId, adSessionId, claimToken, 'MINING', 0);
+    if (!redeemedBoost.ok) {
+      return res.status(redeemedBoost.status || 403).json({ success: false, error: redeemedBoost.error || 'Ad verification failed. Please try again.' });
+    }
+    payoutMultiplier = 2;
+  }
+  const payoutAmount = Number((session.estimatedReward * payoutMultiplier).toFixed(6));
+
   // Atomic one-time claim marker in the database (works across serverless instances).
   // Only the request that flips the row from not-CLAIMED to CLAIMED may credit the reward.
   if (supabase) {
@@ -3517,7 +3543,7 @@ app.post('/api/mining/claim', requireUserAuth, async (req: Request, res: Respons
     return res.status(404).json({ success: false, error: 'User wallet balance not found' });
   }
 
-  userBalance.e4f = Number((userBalance.e4f + session.estimatedReward).toFixed(6));
+  userBalance.e4f = Number((userBalance.e4f + payoutAmount).toFixed(6));
   session.status = 'CLAIMED';
   session.claimedAt = now;
 
@@ -3526,13 +3552,13 @@ app.post('/api/mining/claim', requireUserAuth, async (req: Request, res: Respons
     id: `tx_${now}_${Math.random().toString(36).substring(2, 7)}`,
     userId,
     asset: 'E4F',
-    amount: session.estimatedReward,
+    amount: payoutAmount,
     direction: 'IN',
     source: 'MINING_REWARD',
     status: 'COMPLETED',
     timestamp: now,
     referenceId: session.id,
-    note: `8-Hour Session Mined (+${session.estimatedReward.toFixed(2)} E4F)`,
+    note: payoutMultiplier === 2 ? `8-Hour Session Mined x2 with ad (+${payoutAmount.toFixed(2)} E4F)` : `8-Hour Session Mined (+${payoutAmount.toFixed(2)} E4F)`,
   };
 
   // Authoritative persistence to Supabase and disk
@@ -3547,7 +3573,8 @@ app.post('/api/mining/claim', requireUserAuth, async (req: Request, res: Respons
 
   res.json({
     success: true,
-    rewardAmount: session.estimatedReward,
+    rewardAmount: payoutAmount,
+    boosted: payoutMultiplier === 2,
     asset: 'E4F',
     newBalance: userBalance.e4f,
     transaction: tx,
@@ -4445,7 +4472,7 @@ app.get('/api/referrals/:userId', requireUserAuth, async (req: Request, res: Res
     pending,
     totalEarnedUSDT,
     referralRewardAmount: systemSettings.referralBonusUSDT,
-    qualificationCriteria: `Invited friend starting mining qualifies for a one-time ${systemSettings.referralBonusUSDT} USDT bonus.`,
+    qualificationCriteria: `Your friend must mine ${Math.max(1, Math.floor(Number(systemSettings.referralBonusDays) || 30))} days in a row. Then a one-time ${systemSettings.referralBonusUSDT} USDT bonus is added to your Spot Balance automatically.`,
     history: combinedHistory.slice(0, 50),
   });
 });
@@ -5560,6 +5587,10 @@ app.post(['/api/admin/settings', '/admin/settings'], requireAdminAuth, async (re
     const v = Number(updates.referralBonusUSDT);
     updates.referralBonusUSDT = !isNaN(v) && v >= 0 ? Math.round(v * 100) / 100 : 5;
   }
+  if (updates.referralBonusDays !== undefined) {
+    const v = Math.floor(Number(updates.referralBonusDays));
+    updates.referralBonusDays = !isNaN(v) && v >= 1 && v <= 365 ? v : 30;
+  }
   if (updates.rewardedAdRequired !== undefined) {
     updates.rewardedAdRequired = updates.rewardedAdRequired === true || updates.rewardedAdRequired === 'true';
   }
@@ -5571,6 +5602,9 @@ app.post(['/api/admin/settings', '/admin/settings'], requireAdminAuth, async (re
   }
   if (updates.strictTaskTimer !== undefined) {
     updates.strictTaskTimer = updates.strictTaskTimer === true || updates.strictTaskTimer === 'true';
+  }
+  if (updates.miningClaimBoostEnabled !== undefined) {
+    updates.miningClaimBoostEnabled = updates.miningClaimBoostEnabled === true || updates.miningClaimBoostEnabled === 'true';
   }
   if (updates.miningWaterfallEnabled !== undefined) {
     updates.miningWaterfallEnabled = updates.miningWaterfallEnabled === true || updates.miningWaterfallEnabled === 'true';
@@ -5670,6 +5704,7 @@ app.post(['/api/admin/settings', '/admin/settings'], requireAdminAuth, async (re
   // Admin can switch the MINING, SPIN and GIFT BOX ad gates ON/OFF.
   systemSettings.rewardedAdRequired = systemSettings.rewardedAdRequired !== false;
   systemSettings.strictTaskTimer = systemSettings.strictTaskTimer !== false;
+  systemSettings.miningClaimBoostEnabled = systemSettings.miningClaimBoostEnabled !== false && String(systemSettings.miningClaimBoostEnabled) !== 'false';
   systemSettings.rewardSpinAdRequired = systemSettings.rewardSpinAdRequired !== false && String(systemSettings.rewardSpinAdRequired) !== 'false';
   systemSettings.giftBoxAdRequired = systemSettings.giftBoxAdRequired !== false && String(systemSettings.giftBoxAdRequired) !== 'false';
   normalizeAdSlotSettings();
