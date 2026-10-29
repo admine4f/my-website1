@@ -43,6 +43,16 @@ let globalAdBusy = false;
 let monetagLastShownMem = 0;
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 
+// Technical ad details (network name, zone id, error text) are shown ONLY to a logged-in admin.
+const adminDiagnostics = (): boolean => {
+  try {
+    return !!(
+      localStorage.getItem('e4f_admin_key') || sessionStorage.getItem('e4f_admin_key') ||
+      localStorage.getItem('e4f_admin_token') || sessionStorage.getItem('e4f_admin_token')
+    );
+  } catch { return false; }
+};
+
 // After an ad has FINISHED, remove any ad-network overlay that is still left on screen
 // (outside our own #root), so the ad closes by itself and the reward flow continues.
 const closeLeftoverAdOverlays = () => {
@@ -646,7 +656,7 @@ export const UnifiedRewardedAdModal: React.FC<UnifiedRewardedAdModalProps> = ({
         {tierFailReason && (
           <div className="mb-3 p-2 rounded-xl bg-amber-500/15 border border-amber-500/30 text-amber-300 text-[10px] flex items-center gap-1.5 animate-in fade-in">
             <RefreshCw className="w-3 h-3 animate-spin shrink-0" />
-            <span>{tierFailReason}</span>
+            <span>{adminDiagnostics() ? tierFailReason : 'Preparing your next ad... please wait.'}</span>
           </div>
         )}
 
@@ -705,7 +715,7 @@ export const UnifiedRewardedAdModal: React.FC<UnifiedRewardedAdModalProps> = ({
                 WATCH FULL ADS TO GET REWARD
               </div>
               <div className="text-[11px] font-semibold text-amber-400/90 uppercase tracking-wider">
-                {`AD IN PROGRESS • ${statusNote || 'PLEASE WAIT'}${isMiningView && miningStep ? ` • AD ${miningStep}/${tiers.length}` : ''}`}
+                {`AD IN PROGRESS • ${(adminDiagnostics() ? statusNote : String(statusNote || '').replace('BACKUP AD', 'NEXT AD')) || 'PLEASE WAIT'}${isMiningView && miningStep ? ` • AD ${miningStep}/${tiers.length}` : ''}`}
               </div>
             </div>
 
@@ -715,11 +725,13 @@ export const UnifiedRewardedAdModal: React.FC<UnifiedRewardedAdModalProps> = ({
               <div className="flex items-center justify-between text-xs pb-2 border-b border-slate-800">
                 <div className="flex items-center gap-1.5 font-bold text-amber-300">
                   <span className="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-ping shrink-0" />
-                  <span>{currentTier?.provider} Real Ad</span>
+                  <span>{adminDiagnostics() ? `${currentTier?.provider} Real Ad` : 'Sponsored Ad'}</span>
                 </div>
-                <span className="px-2.5 py-0.5 rounded-full bg-slate-800 text-slate-300 font-mono text-[10px] font-semibold border border-slate-700">
-                  Zone: {String(currentTier?.id || 'Active').replace(/E4F$/i, '')}
-                </span>
+                {adminDiagnostics() && (
+                  <span className="px-2.5 py-0.5 rounded-full bg-slate-800 text-slate-300 font-mono text-[10px] font-semibold border border-slate-700">
+                    Zone: {String(currentTier?.id || 'Active').replace(/E4F$/i, '')}
+                  </span>
+                )}
               </div>
 
               {/* 100% In-App Sandboxed Ad Container - NO EXTERNAL REDIRECT */}
