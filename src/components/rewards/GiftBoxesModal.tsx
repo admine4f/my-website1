@@ -84,6 +84,12 @@ export const GiftBoxesModal: React.FC<GiftBoxesModalProps> = ({ onClose }) => {
       isOpened: false,
     };
 
+    // Admin switched the Gift Box ad gate OFF: open the box directly (no ad)
+    if (adRequired === false) {
+      executeOpenBox(boxNum);
+      return;
+    }
+
     setAdTargetBox(targetBox);
   };
 
