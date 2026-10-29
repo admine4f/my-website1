@@ -2103,6 +2103,23 @@ app.post('/api/auth/telegram', async (req: Request, res: Response) => {
         if (tgUser.id === 8827675419 || u.telegramId === 8827675419) {
           u.referralCode = 'E4F786112';
         }
+        // The database function always grants 25 USDT + 10 E4F. Make the amount follow the admin setting exactly.
+        if (rpcData.welcome_bonus_granted && b) {
+          try {
+            const wantUSDT = systemSettings.welcomeBonusEnabled === false ? 0 : Number(systemSettings.welcomeBonusUSDT ?? 25);
+            const wantE4F = systemSettings.welcomeBonusEnabled === false ? 0 : Number(systemSettings.welcomeBonusE4F ?? 10);
+            const dUSDT = Number((wantUSDT - 25).toFixed(6));
+            const dE4F = Number((wantE4F - 10).toFixed(6));
+            if (dUSDT !== 0 || dE4F !== 0) {
+              b.usdt = Math.max(0, Number((Number(b.usdt || 0) + dUSDT).toFixed(6)));
+              b.e4f = Math.max(0, Number((Number(b.e4f || 0) + dE4F).toFixed(6)));
+              balances.set(u.id, b);
+              await setSupabaseBalance(u.id, { usdt: b.usdt, e4f: b.e4f });
+            }
+          } catch (adjErr) {
+            console.warn('[Welcome] adjust to admin amount failed:', adjErr);
+          }
+        }
         users.set(u.id, u);
         balances.set(u.id, b);
         const sessionToken = generateUserSessionToken(u.id);
@@ -3352,11 +3369,11 @@ const handleStartMining = async (req: Request, res: Response) => {
               .select('*')
               .eq('referee_id', refereeTgId)
               .maybeSingle();
-            if (dbRef && (Number(dbRef.bonus_amount) >= 5 || dbRef.status === 'QUALIFIED')) {
+            if (dbRef && (Number(dbRef.bonus_amount) > 0 || dbRef.status === 'QUALIFIED')) {
               alreadyAwarded = true;
               if (refRecord) {
                 refRecord.status = 'QUALIFIED';
-                refRecord.rewardEarned = Number(dbRef.bonus_amount) || 5;
+                refRecord.rewardEarned = Number(dbRef.bonus_amount) || Number(systemSettings.referralBonusUSDT) || 5;
               }
             }
           }
@@ -4437,7 +4454,7 @@ app.get('/api/referrals/:userId', requireUserAuth, async (req: Request, res: Res
   const qualified = userReferrals.filter(r => r.status === 'QUALIFIED').length;
   const active = Math.max(0, totalInvited - qualified);
   const pending = 0;
-  const totalEarnedUSDT = qualified * systemSettings.referralBonusUSDT;
+  const totalEarnedUSDT = Number(userReferrals.reduce((sum, r) => sum + (r.status === 'QUALIFIED' ? Number(r.rewardEarned) || systemSettings.referralBonusUSDT : 0), 0).toFixed(6));
 
   if (user.telegramId === 8827675419 || userId === 'usr_8827675419') {
     user.referralCode = 'E4F786112';
