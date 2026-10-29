@@ -379,8 +379,14 @@ export const AdminControlModal: React.FC<AdminControlModalProps> = ({ onClose })
         }
         if (dash.systemSettings.welcomeBonusUSDT !== undefined) setWelcomeBonusUSDT(dash.systemSettings.welcomeBonusUSDT);
         if (dash.systemSettings.welcomeBonusE4F !== undefined) setWelcomeBonusE4F(dash.systemSettings.welcomeBonusE4F);
+        if (dash.systemSettings.referralBonusUSDT !== undefined) setReferralBonusUSDT(dash.systemSettings.referralBonusUSDT);
         if (dash.systemSettings.referralMiningBoostTiers && dash.systemSettings.referralMiningBoostTiers.length > 0) {
-          setReferralMiningBoostTiers(dash.systemSettings.referralMiningBoostTiers);
+          setReferralMiningBoostTiers(
+            dash.systemSettings.referralMiningBoostTiers.map((t: any) => ({
+              minReferrals: Number(t.minReferrals) || 0,
+              boostPercentage: Number(t.boostPercentage !== undefined ? t.boostPercentage : t.boostPercent) || 0,
+            }))
+          );
         }
 
         // Waterfall Ad Variables with strict real-ID sanitization
@@ -692,7 +698,11 @@ export const AdminControlModal: React.FC<AdminControlModalProps> = ({ onClose })
         welcomeBonusUSDT: Number(welcomeBonusUSDT),
         welcomeBonusE4F: Number(welcomeBonusE4F),
         referralBonusUSDT: Number(referralBonusUSDT),
-        referralMiningBoostTiers,
+        referralMiningBoostTiers: referralMiningBoostTiers.map((t: any) => ({
+          minReferrals: Number(t.minReferrals) || 0,
+          boostPercent: Number(t.boostPercentage) || 0,
+          boostPercentage: Number(t.boostPercentage) || 0,
+        })),
         miningRatePerHour: Number(miningRatePerHour),
       }, adminKey);
       addToast('Saved', 'Welcome bonus, referral rewards & mining boost tiers updated without app update!', 'success');
