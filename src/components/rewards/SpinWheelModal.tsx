@@ -75,7 +75,17 @@ export const SpinWheelModal: React.FC<SpinWheelModalProps> = ({ onClose }) => {
       return;
     }
 
-    if (spinStatus?.adRequired !== false) {
+    // Always ask the server for the CURRENT admin Ad Gate setting right before the spin
+    let gateOn = spinStatus?.adRequired !== false;
+    try {
+      const fresh = await api.getSpinStatus(user.id);
+      if (fresh) {
+        setSpinStatus(fresh);
+        gateOn = fresh.adRequired !== false;
+      }
+    } catch {}
+
+    if (gateOn) {
       setShowAdModal(true);
     } else {
       executeSpin();
