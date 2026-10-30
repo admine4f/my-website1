@@ -1,1 +1,1 @@
-E4F-FINAL-v20 | Referral bonus unlocks after friend mines 30 days in a row, mining 2x claim, ad gates, v10-v19 | 2026-10-29
+E4F-FINAL-v21 | Admin switch: show ad details to everyone, referral 30d, mining claim 2x, v10-v20 | 2026-10-30
