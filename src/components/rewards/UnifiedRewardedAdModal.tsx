@@ -44,7 +44,9 @@ let monetagLastShownMem = 0;
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 
 // Technical ad details (network name, zone id, error text) are shown ONLY to a logged-in admin.
+let publicDiagnostics = false; // set from the admin panel switch "Show ad details to everyone"
 const adminDiagnostics = (): boolean => {
+  if (publicDiagnostics) return true;
   try {
     return !!(
       localStorage.getItem('e4f_admin_key') || sessionStorage.getItem('e4f_admin_key') ||
@@ -231,6 +233,7 @@ export const UnifiedRewardedAdModal: React.FC<UnifiedRewardedAdModalProps> = ({
         // Create authoritative backend session. The SERVER decides the slot and the ad network/ids
         // (Mining = 5-step waterfall, Spin / Gift Box = the dedicated ad of this slot).
         const session = await api.createUniversalAdSession(userId, actionType, targetId);
+        publicDiagnostics = (session as any)?.showDiagnostics === true;
         if (!isMountedRef.current) return;
 
         if (!session.tiers || session.tiers.length === 0) {
