@@ -3,10 +3,13 @@
 
 export type LegalKey = 'privacy' | 'whitepaper' | 'roadmap';
 
+export type LegalBlock = { p: string } | { li: string[] };
+
 export interface LegalSection {
   h: string;
   p?: string[];
   li?: string[];
+  blocks?: LegalBlock[]; // when present, rendered in this exact order
 }
 
 export interface LegalDoc {
@@ -20,90 +23,154 @@ const UPDATED = 'October 27, 2026';
 
 export const LEGAL_DOCS: Record<LegalKey, LegalDoc> = {
   privacy: {
-    title: 'Privacy Policy',
-    updated: UPDATED,
+    title: 'Privacy Policy – E4F Web3 Exchange',
+    updated: 'October 30, 2026',
     intro:
-      'E4F Web3 Exchange ("E4F", "we") is a Telegram Mini App. This policy explains what information we handle, why, and the choices you have. By using the app you agree to this policy.',
+      'E4F Web3 Exchange ("E4F", "we", "our", or "us") is a Telegram Mini App (TMA) that currently operates as a trading simulation and mining game.',
     sections: [
       {
-        h: '1. Information we handle',
-        li: [
-          'Telegram account data provided by Telegram when you open the app: Telegram user ID, first and last name, username and language. We verify this data on our server before trusting it.',
-          'Referral data: the referral code you used or share, and who joined through it.',
-          'In-app activity: mining sessions, spins, gift boxes, daily check-ins, completed tasks, balances and transaction history.',
-          'Wallet details you choose to enter: withdrawal or deposit addresses and transaction hashes.',
-          'Security and anti-fraud data: IP address, device and browser type, timestamps and request logs.',
-          'Ad records: an anonymous ad-session ID, which ad network showed the ad and whether the ad was completed.',
-        ],
-        p: [
-          'We do not ask for passwords, ID documents, selfies, phone contacts or your precise location. No KYC is required for normal use.',
+        h: '',
+        blocks: [
+          { p: 'This Privacy Policy explains what information we collect, how we use it, how advertising works, and what choices users have.' },
+          { p: 'By using E4F, you acknowledge this Privacy Policy.' },
         ],
       },
       {
-        h: '2. How we use it',
-        li: [
-          'To run the app: mining, rewards, tasks, referrals, wallet and withdrawals.',
-          'To prevent fraud, bots, duplicate rewards and abuse.',
-          'To keep the service secure, fix problems and improve it.',
-          'To answer support requests and meet legal obligations.',
+        h: '1. Information We Collect',
+        blocks: [
+          { p: 'We may collect and process the following information:' },
+          { li: ['Telegram Data: Telegram user ID, name, username, and language, verified through Telegram\'s authentication system.', 'Referral Data: Referral codes used or shared by users.', 'In-App Activity: Mining sessions, activity streaks, spins, gift boxes, daily check-ins, tasks, and virtual balances.', 'Security Information: IP address, device type, timestamps, and technical request logs.', 'Advertising Data: Advertising session identifiers, ad network information, and ad completion status.'] },
+          { p: 'We do not request Telegram passwords, identity documents, selfies, phone contacts, or precise GPS location.' },
         ],
       },
       {
-        h: '3. Advertising',
-        p: [
-          'Rewards in E4F are funded by advertising. Ads are shown inside the app by third-party advertising partners, and we may add or change partners over time.',
-          'Watching an ad is always your choice. You are rewarded only after an ad finishes, never for clicking on an ad. If you close an ad early you receive no reward and it does not count.',
-          'Ad networks may collect device and ad-interaction data under their own privacy policies. We pass them only an anonymous ad-session identifier; we do not give them your balance, wallet address or Telegram username.',
+        h: '1.1 Trusted Miner Activity System (No KYC)',
+        blocks: [
+          { p: 'E4F does not currently require identity documents, KYC verification, or deposits to use its game features.' },
+          { p: 'Users who complete the required daily mining activity for 120 consecutive UTC days may receive a "Trusted Miner" badge.' },
+          { p: 'If a user misses the required daily activity, the streak may reset.' },
+          { p: 'The badge indicates completion of an in-app activity requirement. It is not formal identity verification and does not guarantee that an account is operated by a human or that automated activity is impossible.' },
         ],
       },
       {
-        h: '4. Sharing',
-        p: [
-          'We do not sell your personal data. We share data only with service providers that host and store it (for example our database and hosting providers), with ad networks as described above, and with authorities when the law requires it.',
+        h: '2. How We Use Information',
+        blocks: [
+          { p: 'We use collected information to:' },
+          { li: ['Operate the E4F Mini App.', 'Maintain mining and activity streaks.', 'Manage referrals and virtual rewards.', 'Prevent fraud, abuse, and automated activity.', 'Maintain security and improve performance.', 'Validate rewarded advertising sessions.', 'Fix technical issues and improve user experience.'] },
         ],
       },
       {
-        h: '5. Retention and deletion',
-        p: [
-          'We keep your data while your account is active. You can delete your account at any time from Profile > Delete Account. This permanently erases your balances, mining sessions and task records. Limited records may be kept where needed to prevent fraud or to comply with the law.',
+        h: '2.1 Token Status, Virtual Balances and Payout Disclosure',
+        blocks: [
+          { p: 'E4F is currently in a pre-listing development phase.' },
+          { p: 'The E4F token is not currently listed on any exchange through this application.' },
+          { p: 'All E4F and eUSDT balances displayed in the app are virtual in-app points used for simulation, gameplay, leaderboards, and ranking purposes.' },
+          { p: 'Important:' },
+          { li: ['eUSDT is not real USDT.', 'Virtual balances are not deposits or withdrawable cryptocurrency.', 'Real cryptocurrency deposits and withdrawals are currently not available.', 'Any future token listing, redemption, or withdrawal functionality will be subject to separate announcements, applicable terms, and availability.', 'Advertising rewards are virtual in-game points only.'] },
+          { p: 'E4F does not currently promise or guarantee monetary payouts.' },
+        ],
+      },
+      {
+        h: '3. Advertising and Rewarded Ads',
+        blocks: [
+          { p: 'E4F may display optional rewarded advertisements through third-party advertising partners.' },
+          { p: 'Watching advertisements is voluntary.' },
+        ],
+      },
+      {
+        h: '3.1 Basic Features Without Ads',
+        blocks: [
+          { p: 'The following basic game features are designed to remain accessible without watching advertisements:' },
+          { li: ['Mining.', 'Trading simulation.', 'Viewing the wallet.', 'Referrals.', 'Daily check-ins.', 'Tasks.', 'Viewing Trusted Miner status.'] },
+        ],
+      },
+      {
+        h: '3.2 Optional Advertisements for Bonus Rewards',
+        blocks: [
+          { p: 'Users may voluntarily watch advertisements to receive additional virtual in-game rewards.' },
+          { p: 'Advertisements may appear at these locations:' },
+          { li: ['1. Spin Wheel Screen – "Extra Spin (Watch Ad)"', '2. Gift Box Screen – "Open Box (Watch Ad)"', '3. Daily Check-in Screen – "Claim Bonus (Watch Ad)"', '4. Mining Screen – "Bonus Reward (Watch Ad)"'] },
+          { p: 'The app is designed so that:' },
+          { li: ['Users are informed when an action requires watching a rewarded ad.', 'Ads are optional and are not required for basic game functionality.', 'Rewards are granted only after the rewarded ad is successfully completed and validated.', 'Users do not receive rewards for merely clicking advertisements.', 'Closing an advertisement before completion does not qualify for a reward.'] },
+          { p: 'Actual ad availability may depend on the advertising provider.' },
+        ],
+      },
+      {
+        h: '3.3 Third-Party Advertising Partners',
+        blocks: [
+          { p: 'Third-party advertising networks may collect information such as device identifiers, advertising interaction data, and technical information according to their own privacy policies.' },
+          { p: 'E4F may share advertising session information and relevant technical data with advertising partners to facilitate ad delivery, verification, fraud prevention, and monetization.' },
+          { p: 'Users should review the privacy policies of the relevant advertising providers.' },
+        ],
+      },
+      {
+        h: '4. Information Sharing',
+        blocks: [
+          { p: 'We do not sell users\' personal information.' },
+          { p: 'Information may be shared with:' },
+          { li: ['Hosting and database service providers.', 'Advertising and monetization partners.', 'Security and fraud-prevention service providers.', 'Government authorities when required by applicable law.'] },
+          { p: 'We share only information reasonably necessary for the relevant purpose.' },
+        ],
+      },
+      {
+        h: '5. Data Retention and Account Deletion',
+        blocks: [
+          { p: 'We retain information for as long as necessary to operate the service, maintain security, prevent fraud, and comply with applicable legal obligations.' },
+          { p: 'Users may request account deletion through:' },
+          { p: 'Profile → Delete Account' },
+          { p: 'Where deletion is available, associated account information, virtual balances, mining sessions, and game activity will be deleted or deactivated according to our deletion process.' },
+          { p: 'Certain security or anti-fraud records may be retained for a limited period where reasonably necessary or legally required.' },
         ],
       },
       {
         h: '6. Security',
-        p: [
-          'Telegram login data is cryptographically verified on the server, connections use HTTPS, database access is restricted to our server, and rewards are validated on the server. No online service is perfectly secure, so please keep your Telegram account safe.',
+        blocks: [
+          { p: 'We use reasonable technical and organizational measures to protect user information.' },
+          { p: 'These measures include:' },
+          { li: ['Cryptographic verification of Telegram authentication.', 'HTTPS connections.', 'Server-side reward validation.', 'Security monitoring and fraud-prevention measures.'] },
+          { p: 'However, no online service can guarantee absolute security.' },
         ],
       },
       {
-        h: '7. Age',
-        p: [
-          'E4F is intended for users aged 18 or over, or the age of majority where you live. Do not use the app if you are younger.',
+        h: '7. Age Requirements',
+        blocks: [
+          { p: 'E4F is intended for users who are at least 18 years old or have reached the age of majority in their jurisdiction, whichever is higher.' },
         ],
       },
       {
-        h: '8. International use',
-        p: [
-          'Our providers may store or process data in other countries. By using the app you accept this.',
+        h: '8. International Data Processing',
+        blocks: [
+          { p: 'User information may be processed or stored in countries other than the user\'s country of residence, depending on our hosting, database, and service providers.' },
+          { p: 'Where applicable, we take reasonable steps to protect information during such processing.' },
         ],
       },
       {
-        h: '9. Your choices',
-        li: [
-          'View and update your username in Profile.',
-          'Delete your account and data in Profile.',
-          'Choose whether to watch rewarded ads at all.',
-          'Contact us through the official E4F bot in Telegram to ask about your data.',
+        h: '9. User Choices and Rights',
+        blocks: [
+          { p: 'Depending on applicable law, users may have the right to:' },
+          { li: ['Access certain account information.', 'Request correction of inaccurate information.', 'Request account deletion.', 'Choose whether to watch optional rewarded advertisements.', 'Stop using the application.'] },
+          { p: 'Users may contact E4F through its official Telegram bot for privacy-related questions or requests.' },
         ],
       },
       {
-        h: '10. Changes',
-        p: [
-          'We may update this policy. The date at the top shows the latest version. Continued use after a change means you accept it.',
+        h: '10. Changes to This Privacy Policy',
+        blocks: [
+          { p: 'We may update this Privacy Policy when our services, features, advertising practices, or legal requirements change.' },
+          { p: 'The latest update date will be displayed at the top of this document.' },
+          { p: 'Continued use of E4F after an update indicates acknowledgment of the revised policy, where permitted by applicable law.' },
+        ],
+      },
+      {
+        h: '11. Contact Information',
+        blocks: [
+          { p: 'For questions, privacy requests, or concerns regarding this Privacy Policy, contact us through the official E4F Web3 Exchange Telegram bot.' },
+          { p: 'E4F Web3 Exchange' },
+          { p: 'Telegram Mini App' },
+          { p: 'Privacy Policy – October 30, 2026' },
         ],
       },
     ],
   },
-
   whitepaper: {
     title: 'White Paper',
     updated: UPDATED,

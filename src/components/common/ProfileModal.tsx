@@ -259,7 +259,18 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({ onClose }) => {
             <p className="text-[11px] text-slate-300 leading-relaxed">{LEGAL_DOCS[legalKey].intro}</p>
             {LEGAL_DOCS[legalKey].sections.map((sec, i) => (
               <div key={i} className="p-3 rounded-2xl bg-slate-900/70 border border-slate-800/80 space-y-1.5">
-                <h4 className="text-xs font-extrabold text-amber-400">{sec.h}</h4>
+                {sec.h && <h4 className="text-xs font-extrabold text-amber-400">{sec.h}</h4>}
+                {sec.blocks?.map((blk, j) => (
+                  'p' in blk ? (
+                    <p key={j} className="text-[11px] text-slate-300 leading-relaxed">{blk.p}</p>
+                  ) : (
+                    <ul key={j} className="list-disc pl-4 space-y-1">
+                      {blk.li.map((t, k) => (
+                        <li key={k} className="text-[11px] text-slate-300 leading-relaxed">{t}</li>
+                      ))}
+                    </ul>
+                  )
+                ))}
                 {sec.p?.map((t, j) => (
                   <p key={j} className="text-[11px] text-slate-300 leading-relaxed">{t}</p>
                 ))}
