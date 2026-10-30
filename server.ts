@@ -2621,6 +2621,25 @@ app.get('/api/mining/:userId/status', requireUserAuth, async (req: Request, res:
   const now = Date.now();
 
   let userSessions = miningSessions.filter(s => s.userId === userId);
+  // Serverless: another instance may have claimed / changed a session. The database is the truth, so refresh
+  // the status of this user's sessions from it on every call (otherwise a stale instance keeps showing "claim").
+  if (supabase && userSessions.length > 0) {
+    try {
+      const { data: fresh } = await supabase
+        .from('mining_sessions')
+        .select('id,status,claimed_at,end_time')
+        .eq('user_id', userId)
+        .order('start_time', { ascending: false })
+        .limit(10);
+      for (const fr of fresh || []) {
+        const mem = userSessions.find(m => m.id === fr.id);
+        if (mem) {
+          if (fr.status === 'CLAIMED' || fr.status === 'CANCELLED') mem.status = fr.status as any;
+          if (fr.claimed_at) mem.claimedAt = Number(fr.claimed_at);
+        }
+      }
+    } catch {}
+  }
   if (userSessions.length === 0 && supabase) {
     try {
       const { data: dbSessions } = await supabase
