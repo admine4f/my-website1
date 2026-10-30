@@ -432,6 +432,7 @@ const systemSettings = {
   rewardedAdRequired: true,
   strictTaskTimer: true,
   miningClaimBoostEnabled: true,
+  showAdDiagnostics: false,
   adMinWatchSeconds: 5,
   adMiningDurationSeconds: 30,
   miningAdDurationSeconds: 30,
@@ -3071,6 +3072,7 @@ app.post('/api/ads/session/create', requireUserAuth, async (req: Request, res: R
       zoneId: tiers[0].id,
       provider: tiers[0].provider,
       directLink: '',
+      showDiagnostics: systemSettings.showAdDiagnostics === true,
       serverTime: now,
     });
   } catch (err: any) {
@@ -5620,6 +5622,9 @@ app.post(['/api/admin/settings', '/admin/settings'], requireAdminAuth, async (re
   if (updates.strictTaskTimer !== undefined) {
     updates.strictTaskTimer = updates.strictTaskTimer === true || updates.strictTaskTimer === 'true';
   }
+  if (updates.showAdDiagnostics !== undefined) {
+    updates.showAdDiagnostics = updates.showAdDiagnostics === true || updates.showAdDiagnostics === 'true';
+  }
   if (updates.miningClaimBoostEnabled !== undefined) {
     updates.miningClaimBoostEnabled = updates.miningClaimBoostEnabled === true || updates.miningClaimBoostEnabled === 'true';
   }
@@ -5721,6 +5726,7 @@ app.post(['/api/admin/settings', '/admin/settings'], requireAdminAuth, async (re
   // Admin can switch the MINING, SPIN and GIFT BOX ad gates ON/OFF.
   systemSettings.rewardedAdRequired = systemSettings.rewardedAdRequired !== false;
   systemSettings.strictTaskTimer = systemSettings.strictTaskTimer !== false;
+  systemSettings.showAdDiagnostics = systemSettings.showAdDiagnostics === true || String(systemSettings.showAdDiagnostics) === 'true';
   systemSettings.miningClaimBoostEnabled = systemSettings.miningClaimBoostEnabled !== false && String(systemSettings.miningClaimBoostEnabled) !== 'false';
   systemSettings.rewardSpinAdRequired = systemSettings.rewardSpinAdRequired !== false && String(systemSettings.rewardSpinAdRequired) !== 'false';
   systemSettings.giftBoxAdRequired = systemSettings.giftBoxAdRequired !== false && String(systemSettings.giftBoxAdRequired) !== 'false';
