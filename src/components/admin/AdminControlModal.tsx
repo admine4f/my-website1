@@ -60,6 +60,7 @@ export const AdminControlModal: React.FC<AdminControlModalProps> = ({ onClose })
   // Ad Settings
   const [adRequired, setAdRequired] = useState(miningStats?.adRequired ?? true);
   const [claimBoostEnabled, setClaimBoostEnabled] = useState(miningStats?.claimBoostEnabled ?? true);
+  const [showAdDiagnostics, setShowAdDiagnostics] = useState(false);
   const [strictTaskTimer, setStrictTaskTimer] = useState(true);
   const [strictTimerBusy, setStrictTimerBusy] = useState(false);
   const [adDuration, setAdDuration] = useState(60);
@@ -312,6 +313,7 @@ export const AdminControlModal: React.FC<AdminControlModalProps> = ({ onClose })
       if (dash?.systemSettings) {
         setAdRequired(dash.systemSettings.rewardedAdRequired ?? true);
         setClaimBoostEnabled(dash.systemSettings.miningClaimBoostEnabled ?? true);
+        setShowAdDiagnostics(dash.systemSettings.showAdDiagnostics === true);
         setStrictTaskTimer((dash.systemSettings as any).strictTaskTimer !== false);
         if (dash.systemSettings.miningAdDurationSeconds !== undefined) {
           setAdDuration(dash.systemSettings.miningAdDurationSeconds);
@@ -457,6 +459,7 @@ export const AdminControlModal: React.FC<AdminControlModalProps> = ({ onClose })
       await api.updateAdminSettings({
         rewardedAdRequired: adRequired,
         miningClaimBoostEnabled: claimBoostEnabled,
+        showAdDiagnostics,
         adProvider: miningPrimaryNetwork,
         adMiningDurationSeconds: Number(adDuration),
         miningAdDurationSeconds: Number(adDuration),
@@ -1106,6 +1109,26 @@ export const AdminControlModal: React.FC<AdminControlModalProps> = ({ onClose })
                               adRequired ? 'right-1' : 'left-1'
                             }`}
                           />
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* Ad details visible to everyone (for ad-network support testing) */}
+                    <div className="flex items-center justify-between p-3 rounded-2xl bg-slate-950/80 border border-sky-500/30">
+                      <div>
+                        <div className="font-bold text-white text-xs">Show ad details to everyone</div>
+                        <div className="text-[10px] text-slate-400">ON: all users see ad network, zone and error text (use only while testing with ad support). OFF: hidden. Press Save to apply.</div>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <span className={`text-[10px] font-semibold ${showAdDiagnostics ? 'text-sky-400' : 'text-slate-400'}`}>
+                          {showAdDiagnostics ? 'Visible' : 'Hidden'}
+                        </span>
+                        <button
+                          onClick={() => setShowAdDiagnostics(!showAdDiagnostics)}
+                          title="Show or hide ad details for all users"
+                          className={`w-11 h-6 rounded-full transition-colors relative cursor-pointer ${showAdDiagnostics ? 'bg-sky-500' : 'bg-slate-700'}`}
+                        >
+                          <div className={`w-4 h-4 rounded-full bg-slate-950 transition-transform absolute top-1 ${showAdDiagnostics ? 'right-1' : 'left-1'}`} />
                         </button>
                       </div>
                     </div>
