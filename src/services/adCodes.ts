@@ -12,23 +12,23 @@ export interface AdUnitConfig {
 }
 
 export const SPIN_ADS: Record<string, AdUnitConfig> = {
-  spin_01: { richads_1: "410203", monetag_1: "12044377", onclicka: "6153717E4F", richads_2: "410203", monetag_2: "12044377" },
-  spin_02: { richads_1: "410203", monetag_1: "12044377", onclicka: "6153717E4F", richads_2: "410203", monetag_2: "12044377" },
-  spin_03: { richads_1: "410203", monetag_1: "12044377", onclicka: "6153717E4F", richads_2: "410203", monetag_2: "12044377" },
-  spin_04: { richads_1: "410203", monetag_1: "12044377", onclicka: "6153717E4F", richads_2: "410203", monetag_2: "12044377" },
-  spin_05: { richads_1: "410203", monetag_1: "12044377", onclicka: "6153717E4F", richads_2: "410203", monetag_2: "12044377" }
+  spin_01: { richads_1: "410203", monetag_1: "12044377", onclicka: "6153717", richads_2: "410203", monetag_2: "12044377" },
+  spin_02: { richads_1: "410203", monetag_1: "12044377", onclicka: "6153717", richads_2: "410203", monetag_2: "12044377" },
+  spin_03: { richads_1: "410203", monetag_1: "12044377", onclicka: "6153717", richads_2: "410203", monetag_2: "12044377" },
+  spin_04: { richads_1: "410203", monetag_1: "12044377", onclicka: "6153717", richads_2: "410203", monetag_2: "12044377" },
+  spin_05: { richads_1: "410203", monetag_1: "12044377", onclicka: "6153717", richads_2: "410203", monetag_2: "12044377" }
 };
 
 export const BOX_ADS: Record<string, AdUnitConfig> = {
-  box_01: { richads_1: "410202", monetag_1: "12044377", onclicka: "6153772E4F", richads_2: "410202", monetag_2: "12044377" },
-  box_02: { richads_1: "410202", monetag_1: "12044377", onclicka: "6153772E4F", richads_2: "410202", monetag_2: "12044377" },
-  box_03: { richads_1: "410202", monetag_1: "12044377", onclicka: "6153772E4F", richads_2: "410202", monetag_2: "12044377" },
-  box_04: { richads_1: "410202", monetag_1: "12044377", onclicka: "6153772E4F", richads_2: "410202", monetag_2: "12044377" },
-  box_05: { richads_1: "410202", monetag_1: "12044377", onclicka: "6153772E4F", richads_2: "410202", monetag_2: "12044377" }
+  box_01: { richads_1: "410202", monetag_1: "12044377", onclicka: "6153772", richads_2: "410202", monetag_2: "12044377" },
+  box_02: { richads_1: "410202", monetag_1: "12044377", onclicka: "6153772", richads_2: "410202", monetag_2: "12044377" },
+  box_03: { richads_1: "410202", monetag_1: "12044377", onclicka: "6153772", richads_2: "410202", monetag_2: "12044377" },
+  box_04: { richads_1: "410202", monetag_1: "12044377", onclicka: "6153772", richads_2: "410202", monetag_2: "12044377" },
+  box_05: { richads_1: "410202", monetag_1: "12044377", onclicka: "6153772", richads_2: "410202", monetag_2: "12044377" }
 };
 
 export const MINING_ADS: Record<string, AdUnitConfig> = {
-  mining: { richads_1: "410204", monetag_1: "12044377", onclicka: "6153774E4F", richads_2: "410204", monetag_2: "12044377" }
+  mining: { richads_1: "410204", monetag_1: "12044377", onclicka: "6153774", richads_2: "410204", monetag_2: "12044377" }
 };
 
 // Backward-compatible AD_CODES mapping
@@ -161,7 +161,7 @@ export function buildIntraWaterfallTiers(
     const boxMap: Record<number, IntraWaterfallTier> = {
       1: { index: 1, provider: 'RichAds', id: dynamicSettings?.box_01_richads || '410202', placementKey: 'box_01', label: 'RichAds (Box 1)' },
       2: { index: 1, provider: 'Monetag', id: dynamicSettings?.box_02_monetag || '12044377', placementKey: 'box_02', label: 'Monetag (Box 2)' },
-      3: { index: 1, provider: 'OnClickA', id: dynamicSettings?.box_03_onclicka || '6153772E4F', placementKey: 'box_03', label: 'OnClickA (Box 3)' },
+      3: { index: 1, provider: 'OnClickA', id: dynamicSettings?.box_03_onclicka || '6153772', placementKey: 'box_03', label: 'OnClickA (Box 3)' },
       4: { index: 1, provider: 'Monetag', id: box04Id, placementKey: 'box_04', label: 'Monetag (Box 4)' },
       5: { index: 1, provider: 'Monetag', id: dynamicSettings?.box_05_monetag || '12044377', placementKey: 'box_05', label: 'Monetag (Box 5)' },
     };
@@ -173,7 +173,7 @@ export function buildIntraWaterfallTiers(
     const spinMap: Record<number, IntraWaterfallTier> = {
       1: { index: 1, provider: 'RichAds', id: dynamicSettings?.spin_01_richads || '410203', placementKey: 'spin_01', label: 'RichAds (Spin 1)' },
       2: { index: 1, provider: 'Monetag', id: dynamicSettings?.spin_02_monetag || '12044377', placementKey: 'spin_02', label: 'Monetag (Spin 2)' },
-      3: { index: 1, provider: 'OnClickA', id: dynamicSettings?.spin_03_onclicka || '6153717E4F', placementKey: 'spin_03', label: 'OnClickA (Spin 3)' },
+      3: { index: 1, provider: 'OnClickA', id: dynamicSettings?.spin_03_onclicka || '6153717', placementKey: 'spin_03', label: 'OnClickA (Spin 3)' },
       4: { index: 1, provider: 'Monetag', id: spin04Id, placementKey: 'spin_04', label: 'Monetag (Spin 4)' },
       5: { index: 1, provider: 'Monetag', id: dynamicSettings?.spin_05_monetag || '12044377', placementKey: 'spin_05', label: 'Monetag (Spin 5)' },
     };
@@ -183,7 +183,7 @@ export function buildIntraWaterfallTiers(
   // Mining / Withdraw / Sell
   const mining01 = dynamicSettings?.mining_01_richads || MINING_ADS.mining.richads_1 || '410204';
   const mining02 = dynamicSettings?.mining_02_monetag || MINING_ADS.mining.monetag_1 || '12044377';
-  const mining03 = dynamicSettings?.mining_03_onclicka || MINING_ADS.mining.onclicka || '6153774E4F';
+  const mining03 = dynamicSettings?.mining_03_onclicka || MINING_ADS.mining.onclicka || '6153774';
   // Mining step 4 = RichAds 410204 (final ad logic).
   const mining04Saved = dynamicSettings?.mining_04_richads;
   const mining04 = typeof mining04Saved === 'string' && /^\d{6}$/.test(mining04Saved) ? mining04Saved : '410204';
