@@ -1,1 +1,1 @@
-E4F-FINAL-v23 | Wallet shows locked referral bonus line, referral lock/unlock, v10-v22 | 2026-10-31
+E4F-FINAL-v24 | Notifications list, wallet locked referral line, referral lock/unlock, v10-v23 | 2026-10-31
