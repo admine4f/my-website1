@@ -22,6 +22,7 @@ import { ProfileModal } from './components/common/ProfileModal';
 import { SpinWheelModal } from './components/rewards/SpinWheelModal';
 import { GiftBoxesModal } from './components/rewards/GiftBoxesModal';
 import { AccountCreationModal } from './components/common/AccountCreationModal';
+import { NotificationsModal } from './components/common/NotificationsModal';
 
 const AppContent: React.FC = () => {
   const {
@@ -77,6 +78,7 @@ const AppContent: React.FC = () => {
       {activeModal === 'SUPPORT' && <SupportModal onClose={closeModal} />}
       {activeModal === 'ADMIN' && <AdminControlModal onClose={closeModal} />}
       {activeModal === 'PROFILE' && <ProfileModal onClose={closeModal} />}
+      {activeModal === 'NOTIFICATIONS' && <NotificationsModal onClose={closeModal} />}
       {activeModal === 'GIFT_BOXES' && <GiftBoxesModal onClose={closeModal} />}
       {activeModal === 'SPIN' && <SpinWheelModal onClose={closeModal} />}
 
