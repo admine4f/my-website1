@@ -6,21 +6,21 @@
 // Spin 1-5 Waterfall IDs
 export let spin_01_richads = '410203';
 export let spin_02_monetag = '12044377';
-export let spin_03_onclicka = '6153717E4F';
+export let spin_03_onclicka = '6153717';
 export let spin_04_richads = '12044377';
 export let spin_05_monetag = '12044377';
 
 // Gift Box 1-5 Waterfall IDs
 export let box_01_richads = '410202';
 export let box_02_monetag = '12044377';
-export let box_03_onclicka = '6153772E4F';
+export let box_03_onclicka = '6153772';
 export let box_04_richads = '12044377';
 export let box_05_monetag = '12044377';
 
 // Mining 1-5 Waterfall IDs
 export let mining_01_richads = '410204';
 export let mining_02_monetag = '12044377';
-export let mining_03_onclicka = '6153774E4F';
+export let mining_03_onclicka = '6153774';
 export let mining_04_richads = '410204';
 export let mining_05_monetag = '12044377';
 
@@ -118,7 +118,7 @@ export function getSpinWaterfallTiers(targetSpinNumber?: number): WaterfallTier[
   const spinMap: Record<number, WaterfallTier> = {
     1: { index: 1, provider: 'RichAds', id: spin_01_richads || '410203', label: 'RichAds (Spin 1)' },
     2: { index: 1, provider: 'Monetag', id: spin_02_monetag || '12044377', label: 'Monetag (Spin 2)' },
-    3: { index: 1, provider: 'OnClickA', id: spin_03_onclicka || '6153717E4F', label: 'OnClickA (Spin 3)' },
+    3: { index: 1, provider: 'OnClickA', id: spin_03_onclicka || '6153717', label: 'OnClickA (Spin 3)' },
     4: { index: 1, provider: 'Monetag', id: spin_04_richads || '12044377', label: 'Monetag (Spin 4)' },
     5: { index: 1, provider: 'Monetag', id: spin_05_monetag || '12044377', label: 'Monetag (Spin 5)' },
   };
@@ -131,7 +131,7 @@ export function getBoxWaterfallTiers(targetBoxNumber?: number): WaterfallTier[] 
   const boxMap: Record<number, WaterfallTier> = {
     1: { index: 1, provider: 'RichAds', id: box_01_richads || '410202', label: 'RichAds (Box 1)' },
     2: { index: 1, provider: 'Monetag', id: box_02_monetag || '12044377', label: 'Monetag (Box 2)' },
-    3: { index: 1, provider: 'OnClickA', id: box_03_onclicka || '6153772E4F', label: 'OnClickA (Box 3)' },
+    3: { index: 1, provider: 'OnClickA', id: box_03_onclicka || '6153772', label: 'OnClickA (Box 3)' },
     4: { index: 1, provider: 'Monetag', id: box_04_richads || '12044377', label: 'Monetag (Box 4)' },
     5: { index: 1, provider: 'Monetag', id: box_05_monetag || '12044377', label: 'Monetag (Box 5)' },
   };
