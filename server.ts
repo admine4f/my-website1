@@ -1616,6 +1616,7 @@ async function getOrCreateUserAsync(
       minedDays: 0,
       rewardEarned: 0,
     });
+    recordLockedReferral(referredByUserId, user).catch(() => {});
   }
 
   if (existingBalances && (Number(existingBalances.usdt) > 0 || Number(existingBalances.e4f) > 0 || Number(existingBalances.btc) > 0 || Number(existingBalances.eth) > 0)) {
@@ -2185,6 +2186,7 @@ app.post('/api/auth/telegram', async (req: Request, res: Response) => {
           rewardEarned: 0,
         });
       }
+      recordLockedReferral(user.referredBy, user).catch(() => {});
       persistDatabaseSync();
     }
   }
@@ -2591,6 +2593,78 @@ async function evaluateTrustedMiner(userId: string, now: number): Promise<void> 
     await syncUserToSupabase(u);
     scheduleSaveDatabase();
   }
+}
+
+// ---------------------------------------------------------------------------
+// Referral bonus: it is put on hold (LOCKED) as soon as a friend joins and is released to the referrer's
+// Spot Balance automatically when the friend has mined N days in a row (default 30).
+// ---------------------------------------------------------------------------
+function referralRequiredDays(): number {
+  return Math.max(1, Math.floor(Number(systemSettings.referralBonusDays) || 30));
+}
+function referralBonusNow(): number {
+  const v = Number(systemSettings.referralBonusUSDT);
+  return Number.isFinite(v) && v >= 0 ? v : 5;
+}
+function referrerTelegramId(referrerId: string): number {
+  const ru = users.get(referrerId);
+  return Number(ru?.telegramId) || parseInt(String(referrerId).replace('usr_', '')) || 0;
+}
+function refereeTelegramId(referee: { id: string; telegramId?: number }): number {
+  return Number(referee.telegramId) || parseInt(String(referee.id).replace('usr_', '')) || 0;
+}
+
+// Writes the LOCKED referral row when a friend joins (never overwrites an existing row).
+async function recordLockedReferral(referrerId: string, referee: UserRecord): Promise<void> {
+  if (!supabase || !referrerId || referrerId === referee.id) return;
+  try {
+    const referrerTg = referrerTelegramId(referrerId);
+    const refereeTg = refereeTelegramId(referee);
+    if (!referrerTg || !refereeTg || referrerTg === refereeTg) return;
+    await supabase.from('referrals').upsert(
+      { referrer_id: referrerTg, referee_id: refereeTg, bonus_amount: referralBonusNow(), status: 'LOCKED' },
+      { onConflict: 'referee_id', ignoreDuplicates: true }
+    );
+  } catch (e) {
+    console.warn('[Referral] could not record locked referral:', e);
+  }
+}
+
+// Consecutive mining days + "active" flag (mined today or yesterday, UTC) for many users at once.
+async function batchMiningStreaks(userIds: string[], now: number): Promise<Record<string, { streak: number; active: boolean }>> {
+  const DAY = 86400000;
+  const windowDays = Math.max(referralRequiredDays(), TRUSTED_MINER_DAYS) + 5;
+  const since = now - windowDays * DAY;
+  const daysBy = new Map<string, Set<number>>();
+  userIds.forEach(id => daysBy.set(id, new Set<number>()));
+  for (const s of miningSessions) {
+    const set = daysBy.get(s.userId);
+    if (set && Number(s.startTime) >= since) set.add(Math.floor(Number(s.startTime) / DAY));
+  }
+  if (supabase && userIds.length > 0) {
+    const chunk = Math.max(1, Math.floor(800 / windowDays));
+    for (let i = 0; i < userIds.length; i += chunk) {
+      try {
+        const part = userIds.slice(i, i + chunk);
+        const { data } = await supabase
+          .from('mining_sessions')
+          .select('user_id,start_time')
+          .in('user_id', part)
+          .gte('start_time', since)
+          .limit(1000);
+        (data || []).forEach((r: any) => daysBy.get(String(r.user_id))?.add(Math.floor(Number(r.start_time) / DAY)));
+      } catch {}
+    }
+  }
+  const today = Math.floor(now / DAY);
+  const out: Record<string, { streak: number; active: boolean }> = {};
+  daysBy.forEach((days, id) => {
+    let d = days.has(today) ? today : today - 1;
+    let streak = 0;
+    while (days.has(d)) { streak++; d--; }
+    out[id] = { streak, active: days.has(today) || days.has(today - 1) };
+  });
+  return out;
 }
 
 // Old deposit-based verification endpoint is removed
@@ -3379,7 +3453,11 @@ const handleStartMining = async (req: Request, res: Response) => {
     if (referrerId && referrerId !== userId) {
       // Check if bonus was already granted for this friend
       let refRecord = referralHistory.find(r => r.referredUserId === userId);
-      let alreadyAwarded = Boolean(refRecord && (refRecord.rewardEarned > 0 || refRecord.status === 'QUALIFIED'));
+      let lockedAmount = 0;
+      let alreadyAwarded = Boolean(
+        (refRecord && refRecord.status === 'QUALIFIED') ||
+        transactions.some(t => t.userId === referrerId && t.source === 'REFERRAL_BONUS' && String(t.id).endsWith('_' + userId))
+      );
 
       if (!alreadyAwarded && supabase) {
         try {
@@ -3390,11 +3468,12 @@ const handleStartMining = async (req: Request, res: Response) => {
               .select('*')
               .eq('referee_id', refereeTgId)
               .maybeSingle();
-            if (dbRef && (Number(dbRef.bonus_amount) > 0 || dbRef.status === 'QUALIFIED')) {
+            if (dbRef && Number(dbRef.bonus_amount) > 0) lockedAmount = Number(dbRef.bonus_amount);
+            if (dbRef && dbRef.status === 'QUALIFIED') {
               alreadyAwarded = true;
               if (refRecord) {
                 refRecord.status = 'QUALIFIED';
-                refRecord.rewardEarned = Number(dbRef.bonus_amount) || Number(systemSettings.referralBonusUSDT) || 5;
+                refRecord.rewardEarned = Number(dbRef.bonus_amount) || referralBonusNow();
               }
             }
           }
@@ -3412,7 +3491,36 @@ const handleStartMining = async (req: Request, res: Response) => {
       }
 
       if (!alreadyAwarded && friendStreak >= requiredDays) {
-        const bonusUSDT = systemSettings.referralBonusUSDT !== undefined ? systemSettings.referralBonusUSDT : 5.0;
+        // The amount that was put on hold when the friend joined is the amount that is released.
+        const bonusUSDT = lockedAmount > 0 ? lockedAmount : referralBonusNow();
+
+        // Release it only ONCE: the first request that flips the row to QUALIFIED pays; any other request stops here.
+        if (supabase) {
+          try {
+            const referrerTg = referrerTelegramId(referrerId);
+            const refereeTg = refereeTelegramId({ id: userId, telegramId: miningUser?.telegramId });
+            if (referrerTg > 0 && refereeTg > 0) {
+              const flip = await supabase
+                .from('referrals')
+                .update({ status: 'QUALIFIED', bonus_amount: bonusUSDT, referrer_id: referrerTg })
+                .eq('referee_id', refereeTg)
+                .neq('status', 'QUALIFIED')
+                .select('referee_id');
+              if (!flip.error && (!flip.data || flip.data.length === 0)) {
+                const ins = await supabase.from('referrals').insert({ referrer_id: referrerTg, referee_id: refereeTg, bonus_amount: bonusUSDT, status: 'QUALIFIED' });
+                if (ins.error && String((ins.error as any).code) === '23505') {
+                  alreadyAwarded = true; // somebody else already released it
+                }
+              }
+            }
+          } catch (e) {
+            console.warn('[Referral] release lock check failed:', e);
+          }
+        }
+      }
+
+      if (!alreadyAwarded && friendStreak >= requiredDays) {
+        const bonusUSDT = lockedAmount > 0 ? lockedAmount : referralBonusNow();
 
         // 1. Credit referrer balance atomically
         const referrerBal = await getSupabaseBalance(referrerId);
@@ -3431,7 +3539,7 @@ const handleStartMining = async (req: Request, res: Response) => {
           source: 'REFERRAL_BONUS',
           status: 'COMPLETED',
           timestamp: Date.now(),
-          note: `Referral bonus: ${bonusUSDT} USDT credited as invited friend (${friendName}) mined ${requiredDays} days in a row`,
+          note: `Referral bonus unlocked: ${bonusUSDT} USDT. Invited friend (${friendName}) mined ${requiredDays} days in a row`,
         };
         await recordTransaction(bonusTx);
 
@@ -4470,12 +4578,76 @@ app.get('/api/referrals/:userId', requireUserAuth, async (req: Request, res: Res
     )
   );
 
-  // 100% Real User Referral Stats (zero fake/demo numbers)
-  const totalInvited = Math.max(userReferrals.length, directInvitedUsers.length, dbReferrals.length, dbInvitedUsers.length);
-  const qualified = userReferrals.filter(r => r.status === 'QUALIFIED').length;
-  const active = Math.max(0, totalInvited - qualified);
-  const pending = 0;
-  const totalEarnedUSDT = Number(userReferrals.reduce((sum, r) => sum + (r.status === 'QUALIFIED' ? Number(r.rewardEarned) || systemSettings.referralBonusUSDT : 0), 0).toFixed(6));
+  // ---- Real referral list: every friend who joined with this user's code, from every source ----
+  const nowTs = Date.now();
+  const requiredDays = referralRequiredDays();
+  type InvFriend = { id: string; uid: string; telegramId: number; name: string; joinedAt: number };
+  const invMap = new Map<string, InvFriend>();
+  for (const inv of dbInvitedUsers) {
+    invMap.set(String(inv.id), {
+      id: String(inv.id), uid: String(inv.uid || ''), telegramId: Number(inv.telegram_id) || 0,
+      name: inv.first_name || inv.username || 'E4F Miner',
+      joinedAt: inv.created_at ? new Date(inv.created_at).getTime() : 0,
+    });
+  }
+  for (const u of directInvitedUsers) {
+    if (!invMap.has(u.id)) invMap.set(u.id, { id: u.id, uid: u.uid || '', telegramId: Number(u.telegramId) || 0, name: u.firstName || u.username || 'E4F Miner', joinedAt: Number(u.createdAt) || 0 });
+  }
+  for (const r of userReferrals) {
+    if (!invMap.has(r.referredUserId)) {
+      invMap.set(r.referredUserId, { id: r.referredUserId, uid: r.referredUid || '', telegramId: parseInt(String(r.referredUserId).replace('usr_', '')) || 0, name: r.referredName || 'E4F Miner', joinedAt: Number(r.timestamp) || 0 });
+    }
+  }
+  for (const dr of dbReferrals) {
+    const tg = Number(dr.referee_id) || 0;
+    if (tg && !Array.from(invMap.values()).some(x => x.telegramId === tg)) {
+      invMap.set(`usr_${tg}`, { id: `usr_${tg}`, uid: '', telegramId: tg, name: 'E4F Miner', joinedAt: dr.created_at ? new Date(dr.created_at).getTime() : 0 });
+    }
+  }
+  const invList = Array.from(invMap.values()).sort((x, y) => y.joinedAt - x.joinedAt).slice(0, 100);
+  const streaks = await batchMiningStreaks(invList.map(f => f.id), nowTs);
+
+  const friends = invList.map(f => {
+    const dbRow = dbReferrals.find(d => Number(d.referee_id) === f.telegramId && f.telegramId > 0);
+    const memRow = userReferrals.find(r => r.referredUserId === f.id);
+    const qualified = Boolean((dbRow && dbRow.status === 'QUALIFIED') || (memRow && memRow.status === 'QUALIFIED'));
+    const amount = qualified
+      ? (Number(dbRow?.bonus_amount) || Number(memRow?.rewardEarned) || referralBonusNow())
+      : (Number(dbRow?.bonus_amount) > 0 ? Number(dbRow!.bonus_amount) : referralBonusNow());
+    const st = streaks[f.id] || { streak: 0, active: false };
+    return {
+      id: f.id,
+      name: f.name,
+      uid: f.uid,
+      joinedAt: f.joinedAt,
+      streakDays: qualified ? Math.max(st.streak, requiredDays) : Math.min(st.streak, requiredDays),
+      requiredDays,
+      active: st.active,
+      bonusUSDT: Number(amount.toFixed(6)),
+      bonusStatus: qualified ? 'UNLOCKED' : 'LOCKED',
+      hasRow: Boolean(dbRow),
+    };
+  });
+
+  // Make sure every friend has a LOCKED row in the database (older friends that joined before this update).
+  if (supabase && user.telegramId) {
+    const missing = invList.filter((f, i) => !friends[i].hasRow && f.telegramId > 0 && f.telegramId !== user.telegramId);
+    if (missing.length > 0) {
+      supabase.from('referrals').upsert(
+        missing.map(f => ({ referrer_id: user.telegramId, referee_id: f.telegramId, bonus_amount: referralBonusNow(), status: 'LOCKED' })),
+        { onConflict: 'referee_id', ignoreDuplicates: true }
+      ).then(() => {}, () => {});
+    }
+  }
+
+  const totalInvited = Math.max(friends.length, userReferrals.length, directInvitedUsers.length, dbReferrals.length, dbInvitedUsers.length);
+  const qualified = friends.filter(f => f.bonusStatus === 'UNLOCKED').length;
+  const activeCount = friends.filter(f => f.active).length;
+  const lockedFriends = friends.filter(f => f.bonusStatus === 'LOCKED');
+  const lockedBonusUSDT = Number(lockedFriends.reduce((sum, f) => sum + f.bonusUSDT, 0).toFixed(6));
+  const totalEarnedUSDT = Number(friends.filter(f => f.bonusStatus === 'UNLOCKED').reduce((sum, f) => sum + f.bonusUSDT, 0).toFixed(6));
+  const active = activeCount;
+  const pending = lockedFriends.length;
 
   if (user.telegramId === 8827675419 || userId === 'usr_8827675419') {
     user.referralCode = 'E4F786112';
@@ -4510,6 +4682,10 @@ app.get('/api/referrals/:userId', requireUserAuth, async (req: Request, res: Res
     pending,
     totalEarnedUSDT,
     referralRewardAmount: systemSettings.referralBonusUSDT,
+    requiredDays,
+    lockedBonusUSDT,
+    unlockedBonusUSDT: totalEarnedUSDT,
+    friends,
     qualificationCriteria: `Your friend must mine ${Math.max(1, Math.floor(Number(systemSettings.referralBonusDays) || 30))} days in a row. Then a one-time ${systemSettings.referralBonusUSDT} USDT bonus is added to your Spot Balance automatically.`,
     history: combinedHistory.slice(0, 50),
   });
