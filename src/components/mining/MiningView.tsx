@@ -6,7 +6,7 @@ import { UnifiedRewardedAdModal } from '../rewards/UnifiedRewardedAdModal';
 import { api } from '../../services/api';
 
 export const MiningView: React.FC = () => {
-  const { user, balances, activeMiningSession, miningStats, refreshMining, refreshProfile, addToast } = useApp();
+  const { user, balances, activeMiningSession, miningStats, refreshMining, refreshProfile, addToast, addNotification } = useApp();
   const [showAdModal, setShowAdModal] = useState(false);
   const [showClaimAdModal, setShowClaimAdModal] = useState(false);
   const [loadingAction, setLoadingAction] = useState(false);
@@ -129,6 +129,7 @@ export const MiningView: React.FC = () => {
       const res = await api.startMining(user.id, adSessionId, claimToken);
       if (res.success) {
         addToast('Mining Started!', '8-Hour E4F session is now actively mining.', 'success');
+        addNotification('Mining started', 'Your 8-hour E4F mining session is running.', 'MINING');
         setActiveAdSession(null);
         await refreshMining();
       }
@@ -150,6 +151,11 @@ export const MiningView: React.FC = () => {
           res.boosted ? 'Double Reward Claimed!' : 'Reward Claimed!',
           `+${res.rewardAmount.toFixed(2)} E4F added to your Pre-Listing Balance.`,
           'success'
+        );
+        addNotification(
+          res.boosted ? 'Double mining reward claimed' : 'Mining reward claimed',
+          `+${res.rewardAmount.toFixed(2)} E4F was added to your balance.`,
+          'MINING'
         );
         await refreshMining();
         await refreshProfile();
