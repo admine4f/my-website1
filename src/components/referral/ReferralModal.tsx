@@ -16,12 +16,18 @@ export const ReferralModal: React.FC<ReferralModalProps> = ({ onClose }) => {
     qualified: number;
     active: number;
     totalEarnedUSDT: number;
+    lockedBonusUSDT: number;
+    requiredDays: number;
+    friends: any[];
     history?: any[];
   }>({
     totalInvited: 0,
     qualified: 0,
     active: 0,
     totalEarnedUSDT: 0,
+    lockedBonusUSDT: 0,
+    requiredDays: 30,
+    friends: [],
     history: [],
   });
 
@@ -44,6 +50,9 @@ export const ReferralModal: React.FC<ReferralModalProps> = ({ onClose }) => {
               qualified: data.qualified || 0,
               active: data.active || 0,
               totalEarnedUSDT: data.totalEarnedUSDT || 0,
+              lockedBonusUSDT: data.lockedBonusUSDT || 0,
+              requiredDays: data.requiredDays || 30,
+              friends: Array.isArray(data.friends) ? data.friends : [],
               history: data.history || [],
             });
           }
@@ -113,8 +122,18 @@ export const ReferralModal: React.FC<ReferralModalProps> = ({ onClose }) => {
             <span className="text-xs font-bold text-white">Direct Bonus: {referralBonusUSDT} USDT / Friend</span>
           </div>
           <p className="text-[11px] text-slate-300 leading-snug">
-            Receive +{referralBonusUSDT} USDT in your Spot Balance automatically when your invited friend mines 30 days in a row. Until then the bonus stays locked.
+            Each friend who joins adds +{referralBonusUSDT} USDT to your locked bonus right away. It moves to your Spot Balance automatically when that friend mines {referralStats.requiredDays} days in a row.
           </p>
+          <div className="grid grid-cols-2 gap-2 mt-2">
+            <div className="p-2 rounded-xl bg-slate-950/70 border border-slate-800 text-center">
+              <div className="text-[9px] text-slate-400 font-semibold">LOCKED BONUS</div>
+              <div className="text-xs font-extrabold text-amber-400 font-mono">{referralStats.lockedBonusUSDT} USDT</div>
+            </div>
+            <div className="p-2 rounded-xl bg-slate-950/70 border border-slate-800 text-center">
+              <div className="text-[9px] text-slate-400 font-semibold">UNLOCKED TO SPOT</div>
+              <div className="text-xs font-extrabold text-emerald-400 font-mono">{referralStats.totalEarnedUSDT} USDT</div>
+            </div>
+          </div>
         </div>
 
         {/* 3 Tier breakdown (Section 29) */}
@@ -154,6 +173,39 @@ export const ReferralModal: React.FC<ReferralModalProps> = ({ onClose }) => {
             <span>Referral Network Ledger</span>
           </span>
           <span className="text-[9px] text-emerald-400 font-medium">90 Days Retained</span>
+        </div>
+
+        {/* My invited friends (each user sees only their own list) */}
+        <div className="space-y-1.5 mb-3">
+          {referralStats.friends.length === 0 ? (
+            <div className="text-[10px] text-slate-500 text-center py-2">No friends have joined with your link yet.</div>
+          ) : (
+            referralStats.friends.map((f: any) => {
+              const pct = Math.min(100, Math.round(((f.streakDays || 0) / (f.requiredDays || 30)) * 100));
+              const unlocked = f.bonusStatus === 'UNLOCKED';
+              return (
+                <div key={f.id} className="p-2 rounded-xl bg-slate-900/80 border border-slate-800">
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="flex items-center gap-1.5 min-w-0">
+                      <span className={`w-2 h-2 rounded-full shrink-0 ${f.active ? 'bg-emerald-400' : 'bg-slate-600'}`} />
+                      <span className="text-[11px] font-bold text-white truncate">{f.name}</span>
+                      {f.uid ? <span className="text-[9px] text-slate-500 font-mono">#{f.uid}</span> : null}
+                    </div>
+                    <span className={`text-[10px] font-bold shrink-0 ${unlocked ? 'text-emerald-400' : 'text-amber-400'}`}>
+                      {unlocked ? `+${f.bonusUSDT} USDT added` : `${f.bonusUSDT} USDT locked`}
+                    </span>
+                  </div>
+                  <div className="flex items-center justify-between text-[9px] text-slate-400 mt-1">
+                    <span>{f.active ? 'Active miner' : 'Not active lately'}</span>
+                    <span className="font-mono">Day {Math.min(f.streakDays || 0, f.requiredDays || 30)}/{f.requiredDays || 30}</span>
+                  </div>
+                  <div className="h-1 rounded-full bg-slate-800 mt-1 overflow-hidden">
+                    <div className={`h-full ${unlocked ? 'bg-emerald-400' : 'bg-amber-400'}`} style={{ width: `${unlocked ? 100 : pct}%` }} />
+                  </div>
+                </div>
+              );
+            })
+          )}
         </div>
 
         {/* Action Buttons */}
