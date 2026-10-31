@@ -1,1 +1,1 @@
-E4F-FINAL-v22 | Referral: locked bonus at signup, unlock after 30 mining days, per-user referral list | 2026-10-31
+E4F-FINAL-v23 | Wallet shows locked referral bonus line, referral lock/unlock, v10-v22 | 2026-10-31
