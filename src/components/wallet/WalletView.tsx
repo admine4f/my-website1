@@ -11,6 +11,7 @@ export const WalletView: React.FC = () => {
   const [filterSource, setFilterSource] = useState<string>('ALL');
   const [depositsEnabled, setDepositsEnabled] = useState<boolean>(false);
   const [withdrawalsEnabled, setWithdrawalsEnabled] = useState<boolean>(true);
+  const [lockedReferralUSDT, setLockedReferralUSDT] = useState<number>(0);
 
   useEffect(() => {
     if (user) {
@@ -25,6 +26,16 @@ export const WalletView: React.FC = () => {
         .getWithdrawals(user.id)
         .then(res => {
           if (Array.isArray(res)) setWithdrawals(res);
+        })
+        .catch(() => {});
+    }
+    // Referral bonus that is still locked (display only, never part of the spendable balance)
+    if (user?.id) {
+      fetch(`/api/referrals/${user.id}`, { headers: api.getUserAuthHeaders() })
+        .then(res => res.json())
+        .then(data => {
+          const v = Number(data?.lockedBonusUSDT);
+          setLockedReferralUSDT(Number.isFinite(v) && v > 0 ? v : 0);
         })
         .catch(() => {});
     }
@@ -121,6 +132,11 @@ export const WalletView: React.FC = () => {
           <div className="text-[11px] text-slate-400 mt-0.5">
             Available spot liquidity ready for trades
           </div>
+          {lockedReferralUSDT > 0 && (
+            <div className="text-[10px] text-amber-400 font-semibold mt-1">
+              🔒 +{Number(lockedReferralUSDT.toFixed(4))} USDT referral bonus locked
+            </div>
+          )}
         </div>
 
         {/* Action Buttons */}
