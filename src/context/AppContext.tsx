@@ -42,6 +42,8 @@ interface AppContextType {
   refreshProfile: () => Promise<void>;
   updateBalances: (b: WalletBalances) => void;
   notifications: AppNotification[];
+  addNotification: (title: string, message: string, type?: AppNotification['type']) => void;
+  markAllNotificationsRead: () => void;
   addToast: (title: string, message: string, type?: 'info' | 'success' | 'error') => void;
   toasts: ToastItem[];
   removeToast: (id: string) => void;
@@ -97,7 +99,16 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const [creatingAccount, setCreatingAccount] = useState(false);
   const initDataRef = React.useRef('');
   const tgUserRef = React.useRef<any>(null);
-  const [notifications, setNotifications] = useState<AppNotification[]>([
+  const NOTIF_KEY = 'e4f_notifications_v1';
+  const [notifications, setNotifications] = useState<AppNotification[]>(() => {
+    try {
+      const raw = localStorage.getItem(NOTIF_KEY);
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (Array.isArray(parsed)) return parsed as AppNotification[];
+      }
+    } catch {}
+    return [
     {
       id: 'notif-1',
       title: 'Welcome to E4F Web3 Exchange',
@@ -114,7 +125,29 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       read: false,
       timestamp: Date.now() - 1800000,
     },
-  ]);
+    ];
+  });
+
+  // Keep the notification list on this device (best effort; works without it)
+  useEffect(() => {
+    try { localStorage.setItem(NOTIF_KEY, JSON.stringify(notifications.slice(0, 50))); } catch {}
+  }, [notifications]);
+
+  const addNotification = useCallback((title: string, message: string, type: AppNotification['type'] = 'REWARD') => {
+    const item: AppNotification = {
+      id: `notif-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+      title,
+      message,
+      type,
+      read: false,
+      timestamp: Date.now(),
+    };
+    setNotifications(prev => [item, ...prev].slice(0, 50));
+  }, []);
+
+  const markAllNotificationsRead = useCallback(() => {
+    setNotifications(prev => (prev.some(n => !n.read) ? prev.map(n => ({ ...n, read: true })) : prev));
+  }, []);
 
   const addToast = (title: string, message: string, type: 'info' | 'success' | 'error' = 'info') => {
     const id = `toast-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
@@ -405,6 +438,36 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     return () => clearInterval(interval);
   }, [user, refreshMining, refreshProfile]);
 
+  // Notify about new referred friends and unlocked referral bonuses (checked once when the app opens)
+  useEffect(() => {
+    if (!user?.id) return;
+    let cancelled = false;
+    fetch(`/api/referrals/${user.id}`, { headers: api.getUserAuthHeaders() })
+      .then(res => res.json())
+      .then(data => {
+        if (cancelled || !data) return;
+        const total = Number(data.totalInvited) || 0;
+        const unlocked = Number(data.qualified) || 0;
+        const key = `e4f_ref_seen_${user.id}`;
+        let seen: { total: number; unlocked: number } | null = null;
+        try { seen = JSON.parse(localStorage.getItem(key) || 'null'); } catch {}
+        if (seen && typeof seen.total === 'number') {
+          if (total > seen.total) {
+            const n = total - seen.total;
+            addNotification('New friend joined', `${n} new friend${n > 1 ? 's' : ''} joined with your referral link.`, 'REFERRAL');
+          }
+          if (unlocked > (seen.unlocked || 0)) {
+            const n = unlocked - (seen.unlocked || 0);
+            addNotification('Referral bonus unlocked', `${n} referral bonus${n > 1 ? 'es were' : ' was'} added to your Spot Balance.`, 'REFERRAL');
+          }
+        }
+        try { localStorage.setItem(key, JSON.stringify({ total, unlocked })); } catch {}
+      })
+      .catch(() => {});
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user?.id]);
+
   return (
     <AppContext.Provider
       value={{
@@ -423,6 +486,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         refreshProfile,
         updateBalances,
         notifications,
+        addNotification,
+        markAllNotificationsRead,
         addToast,
         toasts,
         removeToast,
