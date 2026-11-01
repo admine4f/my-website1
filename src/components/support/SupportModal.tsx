@@ -48,7 +48,7 @@ export const SupportModal: React.FC<SupportModalProps> = ({ onClose }) => {
         {/* Channels */}
         <div className="space-y-2 mb-4">
           <a
-            href="https://t.me/E4F_Support_Bot"
+            href="https://t.me/e4f_help_dex_bot"
             target="_blank"
             rel="noreferrer"
             className="flex items-center justify-between p-3 rounded-xl bg-slate-900 border border-slate-800 hover:border-teal-500/40 transition-colors group"
@@ -64,11 +64,11 @@ export const SupportModal: React.FC<SupportModalProps> = ({ onClose }) => {
                 <div className="text-[10px] text-slate-400">Instant ticket resolution</div>
               </div>
             </div>
-            <span className="text-xs text-sky-400 font-bold">@E4F_Support_Bot</span>
+            <span className="text-xs text-sky-400 font-bold">@e4f_help_dex_bot</span>
           </a>
 
           <a
-            href="https://t.me/E4F_Official_Community"
+            href="https://t.me/E4F_Global_Community"
             target="_blank"
             rel="noreferrer"
             className="flex items-center justify-between p-3 rounded-xl bg-slate-900 border border-slate-800 hover:border-teal-500/40 transition-colors group"
@@ -97,7 +97,7 @@ export const SupportModal: React.FC<SupportModalProps> = ({ onClose }) => {
                 <div className="text-[10px] text-slate-400">Official security inbox</div>
               </div>
             </div>
-            <span className="text-xs font-mono text-teal-300">support@e4f.exchange</span>
+            <span className="text-xs font-mono text-teal-300">e4fofficial.support@gmail.com</span>
           </div>
         </div>
 
