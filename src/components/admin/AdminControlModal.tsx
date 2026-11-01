@@ -164,6 +164,8 @@ export const AdminControlModal: React.FC<AdminControlModalProps> = ({ onClose })
   });
   const [withdrawalList, setWithdrawalList] = useState<any[]>([]);
   const [withdrawalFilter, setWithdrawalFilter] = useState<'ALL' | 'PENDING' | 'COMPLETED' | 'REJECTED'>('PENDING');
+  const [withdrawalSearch, setWithdrawalSearch] = useState('');
+  const [userSearch, setUserSearch] = useState('');
   const [processingWithdrawalId, setProcessingWithdrawalId] = useState<string | null>(null);
 
   // Bonus & Mining Boost Tier Configurations
@@ -2671,10 +2673,24 @@ export const AdminControlModal: React.FC<AdminControlModalProps> = ({ onClose })
                     </div>
                   </div>
 
+                  {/* Search by UID */}
+                  <input
+                    type="text"
+                    value={withdrawalSearch}
+                    onChange={e => setWithdrawalSearch(e.target.value)}
+                    placeholder="Search by UID / ID / name..."
+                    className="w-full px-3 py-2 rounded-xl bg-slate-900 border border-slate-800 text-white text-xs outline-none focus:border-amber-500/60 placeholder:text-slate-500"
+                  />
+
                   {/* Withdrawal Request Cards */}
                   <div className="space-y-3">
                     {withdrawalList
                       .filter(tx => (withdrawalFilter === 'ALL' ? true : tx.status === withdrawalFilter))
+                      .filter(tx => {
+                        const q = withdrawalSearch.trim().toLowerCase();
+                        if (!q) return true;
+                        return [tx.userUid, tx.userId, tx.userName].some(v => String(v ?? '').toLowerCase().includes(q));
+                      })
                       .length === 0 ? (
                       <div className="p-8 text-center text-slate-500 rounded-2xl bg-slate-900/40 border border-slate-800 text-xs">
                         No {withdrawalFilter.toLowerCase()} withdrawal requests found.
@@ -2682,6 +2698,11 @@ export const AdminControlModal: React.FC<AdminControlModalProps> = ({ onClose })
                     ) : (
                       withdrawalList
                         .filter(tx => (withdrawalFilter === 'ALL' ? true : tx.status === withdrawalFilter))
+                        .filter(tx => {
+                          const q = withdrawalSearch.trim().toLowerCase();
+                          if (!q) return true;
+                          return [tx.userUid, tx.userId, tx.userName].some(v => String(v ?? '').toLowerCase().includes(q));
+                        })
                         .map(tx => (
                           <div
                             key={tx.id}
@@ -3559,7 +3580,18 @@ export const AdminControlModal: React.FC<AdminControlModalProps> = ({ onClose })
                   <div className="font-bold text-slate-400 uppercase text-[10px]">
                     Registered Users & UIDs ({userList.length})
                   </div>
-                  {userList.map(u => (
+                  <input
+                    type="text"
+                    value={userSearch}
+                    onChange={e => setUserSearch(e.target.value)}
+                    placeholder="Search by UID / Telegram ID / name..."
+                    className="w-full px-3 py-2 rounded-xl bg-slate-900 border border-slate-800 text-white text-xs outline-none focus:border-amber-500/60 placeholder:text-slate-500"
+                  />
+                  {userList.filter(u => {
+                    const q = userSearch.trim().toLowerCase();
+                    if (!q) return true;
+                    return [u.uid, u.id, u.telegramId, u.firstName, u.lastName, u.username].some(v => String(v ?? '').toLowerCase().includes(q));
+                  }).map(u => (
                     <div
                       key={u.id}
                       className="p-3 rounded-2xl bg-slate-900/80 border border-slate-800 flex items-center justify-between gap-2"
