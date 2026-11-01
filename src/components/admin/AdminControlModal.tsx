@@ -29,6 +29,7 @@ import {
   Calendar,
   Wallet,
   Pickaxe,
+  Pencil,
 } from 'lucide-react';
 import { useApp } from '../../context/AppContext';
 import { api } from '../../services/api';
@@ -199,6 +200,7 @@ export const AdminControlModal: React.FC<AdminControlModalProps> = ({ onClose })
   const [newTaskReward, setNewTaskReward] = useState('1.00');
   const [newTaskMethod, setNewTaskMethod] = useState<'AUTO' | 'MANUAL' | 'TIMER'>('TIMER');
   const [newTaskTimerSec, setNewTaskTimerSec] = useState('30');
+  const [editingTaskId, setEditingTaskId] = useState<string | null>(null);
 
   // Task Submissions Review Queue
   const [submissions, setSubmissions] = useState<any[]>([]);
@@ -787,7 +789,7 @@ export const AdminControlModal: React.FC<AdminControlModalProps> = ({ onClose })
     const resolvedPlatform = (newTaskPlatform === 'CUSTOM' ? customPlatformName.trim() : newTaskPlatform) || 'CUSTOM';
     setLoading(true);
     try {
-      await api.createAdminTask({
+      const taskPayload = {
         title: newTaskTitle,
         description: newTaskDesc,
         platform: resolvedPlatform,
@@ -796,8 +798,15 @@ export const AdminControlModal: React.FC<AdminControlModalProps> = ({ onClose })
         rewardAmount: parseFloat(newTaskReward) || 1.0,
         verificationMethod: newTaskMethod,
         durationSeconds: newTaskMethod === 'TIMER' ? Math.max(5, parseInt(newTaskTimerSec) || 30) : undefined,
-      }, adminKey);
-      addToast('Task Active', `New dynamic task published under ${resolvedPlatform}`, 'success');
+      };
+      if (editingTaskId) {
+        await api.updateAdminTask(editingTaskId, taskPayload, adminKey);
+        addToast('Task Updated', 'Task changes saved', 'success');
+        setEditingTaskId(null);
+      } else {
+        await api.createAdminTask(taskPayload, adminKey);
+        addToast('Task Active', `New dynamic task published under ${resolvedPlatform}`, 'success');
+      }
       setNewTaskTitle('');
       setNewTaskDesc('');
       setCustomPlatformName('');
@@ -808,6 +817,35 @@ export const AdminControlModal: React.FC<AdminControlModalProps> = ({ onClose })
     } finally {
       setLoading(false);
     }
+  };
+
+  // Load an existing task into the form for editing
+  const handleEditTask = (task: any) => {
+    const presets = ['WEBSITE', 'TELEGRAM', 'TWITTER', 'YOUTUBE', 'FACEBOOK', 'INSTAGRAM', 'TIKTOK', 'DISCORD', 'COMMUNITY'];
+    const plat = String(task.platform || 'WEBSITE').toUpperCase();
+    if (presets.includes(plat)) {
+      setNewTaskPlatform(plat);
+      setCustomPlatformName('');
+    } else {
+      setNewTaskPlatform('CUSTOM');
+      setCustomPlatformName(String(task.platform || ''));
+    }
+    setNewTaskTitle(task.title || '');
+    setNewTaskDesc(task.description || '');
+    setNewTaskUrl(task.url || 'https://');
+    setNewTaskAsset(task.rewardAsset === 'E4F' ? 'E4F' : 'USDT');
+    setNewTaskReward(String(task.rewardAmount ?? '1.00'));
+    setNewTaskMethod(['AUTO', 'MANUAL', 'TIMER'].includes(task.verificationMethod) ? task.verificationMethod : 'MANUAL');
+    setNewTaskTimerSec(String(task.durationSeconds || 30));
+    setEditingTaskId(task.id);
+    try { window.scrollTo({ top: 0, behavior: 'smooth' }); } catch {}
+  };
+
+  const handleCancelEditTask = () => {
+    setEditingTaskId(null);
+    setNewTaskTitle('');
+    setNewTaskDesc('');
+    setCustomPlatformName('');
   };
 
   // Delete Task
@@ -3262,7 +3300,7 @@ export const AdminControlModal: React.FC<AdminControlModalProps> = ({ onClose })
                   <div className="p-3.5 rounded-2xl bg-slate-900/80 border border-slate-800 space-y-2.5">
                     <div className="font-bold text-white flex items-center gap-1.5">
                       <Sliders className="w-4 h-4 text-amber-400" />
-                      <span>Add Dynamic Task</span>
+                      <span>{editingTaskId ? 'Edit Task' : 'Add Dynamic Task'}</span>
                     </div>
 
                     <input
@@ -3404,8 +3442,16 @@ export const AdminControlModal: React.FC<AdminControlModalProps> = ({ onClose })
                       disabled={loading}
                       className="w-full py-2 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold text-xs transition-all shadow cursor-pointer"
                     >
-                      Publish Task
+                      {editingTaskId ? 'Update Task' : 'Publish Task'}
                     </button>
+                    {editingTaskId && (
+                      <button
+                        onClick={handleCancelEditTask}
+                        className="w-full py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 font-bold text-xs transition-all cursor-pointer"
+                      >
+                        Cancel Edit
+                      </button>
+                    )}
                   </div>
 
                   {/* Active Tasks List */}
@@ -3433,6 +3479,13 @@ export const AdminControlModal: React.FC<AdminControlModalProps> = ({ onClose })
                             </span>
                           </div>
                         </div>
+                        <button
+                          onClick={() => handleEditTask(task)}
+                          className="p-1.5 rounded-lg bg-amber-500/10 text-amber-400 hover:bg-amber-500/20 shrink-0"
+                          title="Edit task"
+                        >
+                          <Pencil className="w-3.5 h-3.5" />
+                        </button>
                         <button
                           onClick={() => handleDeleteTask(task.id)}
                           className="p-1.5 rounded-lg bg-rose-500/10 text-rose-400 hover:bg-rose-500/20 shrink-0"
