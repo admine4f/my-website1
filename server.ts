@@ -551,6 +551,7 @@ interface DynamicTask {
   status: 'AVAILABLE' | 'SUBMITTED' | 'APPROVED' | 'REJECTED';
   verificationMethod: 'AUTO' | 'MANUAL' | 'TIMER';
   durationSeconds?: number;
+  dailyPush?: boolean; // RichAds Push-style daily Watch task (resets every UTC day)
 }
 
 const dynamicTasks: DynamicTask[] = [
@@ -4219,6 +4220,56 @@ async function hydrateUserTasks(userId: string) {
     userTaskSubmissions.set(userId, list);
   } catch {}
 }
+// ---- Daily Push Watch tasks (RichAds Push-style, resets every UTC day) ----
+// Table: e4f_daily_claims PK (user_id, task_id, day). Completely separate from one-time e4f_task_claims.
+const PUSH_COOLDOWN_SEC = 30;
+const PUSH_MIN_REWARD = 0.001;
+const PUSH_MAX_REWARD = 0.05;
+const devDailyClaims = new Map<string, number>(); // dev fallback only (no Supabase): "user|task|day" -> claimedAt
+function utcDay(): string { return new Date().toISOString().slice(0, 10); }
+async function getDailyState(userId: string): Promise<{ doneToday: Set<string>; lastClaimAt: number }> {
+  const doneToday = new Set<string>();
+  let lastClaimAt = 0;
+  const day = utcDay();
+  if (!supabase) {
+    for (const [k, at] of devDailyClaims) {
+      const [u, t, d] = k.split('|');
+      if (u !== userId) continue;
+      lastClaimAt = Math.max(lastClaimAt, at);
+      if (d === day) doneToday.add(t);
+    }
+    return { doneToday, lastClaimAt };
+  }
+  try {
+    const { data } = await supabase.from('e4f_daily_claims').select('task_id,day,claimed_at').eq('user_id', userId).order('claimed_at', { ascending: false }).limit(60);
+    for (const r of data || []) {
+      if (r.day === day) doneToday.add(r.task_id);
+      lastClaimAt = Math.max(lastClaimAt, Date.parse(r.claimed_at) || 0);
+    }
+  } catch {}
+  return { doneToday, lastClaimAt };
+}
+// Returns true when this is the first claim of this task by this user on this UTC day.
+async function claimDailyOnce(userId: string, taskId: string): Promise<boolean> {
+  const day = utcDay();
+  if (!supabase) {
+    if (isProduction) return false;
+    const k = `${userId}|${taskId}|${day}`;
+    if (devDailyClaims.has(k)) return false;
+    devDailyClaims.set(k, Date.now());
+    return true;
+  }
+  const { error } = await supabase.from('e4f_daily_claims').insert({ user_id: userId, task_id: taskId, day });
+  if (!error) return true;
+  if ((error as any).code === '23505') return false;
+  throw new Error('daily-claim-store: ' + error.message);
+}
+function clampPushReward(n: any): number {
+  const v = Number(n);
+  const x = isFinite(v) ? v : 0.005;
+  return Math.round(Math.min(PUSH_MAX_REWARD, Math.max(PUSH_MIN_REWARD, x)) * 1e6) / 1e6;
+}
+
 app.use(['/api/announcements', '/api/tasks', '/api/admin/announcements', '/api/admin/tasks', '/api/admin/task-submissions'], async (req: Request, res: Response, next: NextFunction) => {
   await loadAdminContent(req.method !== 'GET');
   if (req.method !== 'GET' && req.method !== 'OPTIONS' && (req.originalUrl.startsWith('/api/admin/') || req.originalUrl.startsWith('/api/tasks/submit'))) {
@@ -4241,8 +4292,21 @@ app.get('/api/tasks/:userId', requireUserAuth, async (req: Request, res: Respons
   const { userId } = req.params;
   await hydrateUserTasks(userId);
   const userSubs = userTaskSubmissions.get(userId) || [];
+  const hasPush = dynamicTasks.some(t => t.dailyPush);
+  const daily = hasPush ? await getDailyState(userId) : { doneToday: new Set<string>(), lastClaimAt: 0 };
+  const cooldownSeconds = Math.max(0, Math.ceil((daily.lastClaimAt + PUSH_COOLDOWN_SEC * 1000 - Date.now()) / 1000));
 
   const tasksWithStatus = dynamicTasks.map(t => {
+    if (t.dailyPush) {
+      const done = daily.doneToday.has(t.id);
+      return {
+        ...t,
+        status: done ? 'APPROVED' : 'AVAILABLE',
+        isCompleted: done,
+        timerActive: false,
+        cooldownSeconds,
+      };
+    }
     const sub = userSubs.find(s => s.taskId === t.id);
     const timerKey = `${userId}_${t.id}`;
     const activeTimer = activeTaskTimers.get(timerKey);
@@ -4261,12 +4325,75 @@ app.get('/api/tasks/:userId', requireUserAuth, async (req: Request, res: Respons
   res.json({ tasks: tasksWithStatus });
 });
 
+// Daily Push Watch: step 1 - called by the app ONLY after the user tapped the RichAds notification.
+app.post('/api/tasks/push-start', requireUserAuth, async (req: Request, res: Response) => {
+  const userId = String((req as any).verifiedUserId || req.body?.userId || '');
+  const taskId = String(req.body?.taskId || '');
+  const task = dynamicTasks.find(t => t.id === taskId);
+  if (!task || !task.dailyPush) return res.status(404).json({ success: false, error: 'Task not found' });
+  const daily = await getDailyState(userId);
+  if (daily.doneToday.has(taskId)) return res.status(400).json({ success: false, error: 'Already completed today. Come back after 00:00 UTC.' });
+  const wait = Math.ceil((daily.lastClaimAt + PUSH_COOLDOWN_SEC * 1000 - Date.now()) / 1000);
+  if (wait > 0) return res.status(429).json({ success: false, error: `Please rest ${wait}s before the next ad.`, cooldownSeconds: wait });
+  const durationSeconds = Math.max(10, Math.min(120, task.durationSeconds || 30));
+  const pushToken = adSign('timer', { uid: userId, tid: taskId, push: 1, fs: Date.now() });
+  res.json({ success: true, pushToken, durationSeconds });
+});
+
+// Daily Push Watch: step 2 - reward after the wait time (wall clock, so it still works if the app was in the background).
+app.post('/api/tasks/push-claim', requireUserAuth, async (req: Request, res: Response) => {
+  const userId = String((req as any).verifiedUserId || req.body?.userId || '');
+  const taskId = String(req.body?.taskId || '');
+  const task = dynamicTasks.find(t => t.id === taskId);
+  if (!task || !task.dailyPush) return res.status(404).json({ success: false, error: 'Task not found' });
+  const tk = adVerify('timer', req.body?.pushToken);
+  if (!tk || tk.push !== 1 || tk.uid !== userId || tk.tid !== taskId) {
+    return res.status(400).json({ success: false, error: 'Please start the ad again.' });
+  }
+  const durationSeconds = Math.max(10, Math.min(120, task.durationSeconds || 30));
+  const ageSec = (Date.now() - Number(tk.fs)) / 1000;
+  if (!(ageSec >= 0) || ageSec > 30 * 60) return res.status(400).json({ success: false, error: 'This ad session expired. Please start again.' });
+  if (ageSec < durationSeconds - 1) {
+    const remaining = Math.max(1, Math.ceil(durationSeconds - ageSec));
+    return res.status(400).json({ success: false, error: `Please wait ${remaining}s more.`, remainingSeconds: remaining });
+  }
+  const user = await getUserFromSupabase(userId);
+  const userBalance = await getSupabaseBalance(userId);
+  if (!user || !userBalance) return res.status(404).json({ success: false, error: 'User not found' });
+  const daily = await getDailyState(userId);
+  if (daily.doneToday.has(taskId)) return res.status(400).json({ success: false, error: 'Already completed today. Come back after 00:00 UTC.' });
+  const wait = Math.ceil((daily.lastClaimAt + PUSH_COOLDOWN_SEC * 1000 - Date.now()) / 1000);
+  if (wait > 0) return res.status(429).json({ success: false, error: `Please rest ${wait}s before the next ad.`, cooldownSeconds: wait });
+  try {
+    if (!(await claimDailyOnce(userId, taskId))) return res.status(400).json({ success: false, error: 'Already completed today. Come back after 00:00 UTC.' });
+  } catch (e) { return res.status(503).json({ success: false, error: 'Temporary storage error. Please try again.' }); }
+
+  const reward = clampPushReward(task.rewardAmount);
+  userBalance.usdt = Number((userBalance.usdt + reward).toFixed(6));
+  const tx: TxRecord = {
+    id: `tx_${Date.now()}_pushtask`,
+    userId,
+    asset: 'USDT',
+    amount: reward,
+    direction: 'IN',
+    source: 'TASK_REWARD',
+    status: 'COMPLETED',
+    timestamp: Date.now(),
+    note: `Daily Push Watch Completed: ${task.title}`,
+  };
+  await recordTransaction(tx);
+  await setSupabaseBalance(userId, userBalance).catch(() => {});
+  scheduleSaveDatabase();
+  res.json({ success: true, status: 'APPROVED', reward, asset: 'USDT', balances: userBalance, cooldownSeconds: PUSH_COOLDOWN_SEC });
+});
+
 // Start Website / Video Task Timer
 app.post('/api/tasks/start-timer', requireUserAuth, (req: Request, res: Response) => {
   const { userId, taskId, accumulatedSeconds } = req.body;
   const timerOwner = String((req as any).verifiedUserId || userId);
   const task = dynamicTasks.find(t => t.id === taskId);
   if (!task) return res.status(404).json({ success: false, error: 'Task not found' });
+  if (task.dailyPush) return res.status(400).json({ success: false, error: 'Use the Watch button for this task.' });
   if (task.verificationMethod !== 'TIMER' && (!task.durationSeconds || task.durationSeconds <= 0)) {
     return res.status(400).json({ success: false, error: 'This task does not use timer verification' });
   }
@@ -4346,6 +4473,7 @@ app.post('/api/tasks/verify-timer', requireUserAuth, async (req: Request, res: R
 
   const task = dynamicTasks.find(t => t.id === taskId);
   if (!task) return res.status(404).json({ success: false, error: 'Task not found' });
+  if (task.dailyPush) return res.status(400).json({ success: false, error: 'Use the Watch button for this task.' });
 
   if (task.verificationMethod === 'MANUAL') {
     return res.status(400).json({ success: false, error: 'This task needs admin review. Submit your proof instead.' });
@@ -4433,6 +4561,7 @@ app.post('/api/tasks/submit', requireUserAuth, async (req: Request, res: Respons
 
   const task = dynamicTasks.find(t => t.id === taskId);
   if (!task) return res.status(404).json({ success: false, error: 'Task not found' });
+  if (task.dailyPush) return res.status(400).json({ success: false, error: 'Use the Watch button for this task.' });
 
   await hydrateUserTasks(userId);
   let userSubs = userTaskSubmissions.get(userId);
@@ -4532,6 +4661,7 @@ app.post('/api/tasks/submit', requireUserAuth, async (req: Request, res: Respons
 });
 
 // 6. Referral API (/api/referrals)
+
 app.get('/api/referrals/:userId', requireUserAuth, async (req: Request, res: Response) => {
   const { userId } = req.params;
   const user = await getUserFromSupabase(userId);
@@ -6430,6 +6560,17 @@ function cleanTaskFields(src: any, base?: Partial<DynamicTask>): Partial<Dynamic
     const d = parseInt(String(src.durationSeconds ?? base?.durationSeconds ?? 30));
     out.durationSeconds = method === 'TIMER' || (isFinite(d) && d > 0) ? Math.max(5, Math.min(3600, isFinite(d) ? d : 30)) : undefined;
   }
+  if (src.dailyPush !== undefined) out.dailyPush = src.dailyPush === true || src.dailyPush === 'true';
+  const dp = out.dailyPush !== undefined ? out.dailyPush : !!base?.dailyPush;
+  if (dp) {
+    // Daily Push Watch: always USDT, reward limited to 0.001 - 0.05, timer 10-120s (default 30)
+    out.dailyPush = true;
+    out.verificationMethod = 'TIMER';
+    out.rewardAsset = 'USDT';
+    out.rewardAmount = clampPushReward(src.rewardAmount !== undefined ? src.rewardAmount : base?.rewardAmount);
+    const d = parseInt(String(src.durationSeconds ?? base?.durationSeconds ?? 30));
+    out.durationSeconds = Math.max(10, Math.min(120, isFinite(d) ? d : 30));
+  }
   return out;
 }
 
@@ -6447,6 +6588,7 @@ app.post('/api/admin/tasks', requireAdminAuth, (req: Request, res: Response) => 
     status: 'AVAILABLE',
     verificationMethod: fields.verificationMethod || 'AUTO',
     durationSeconds: fields.durationSeconds,
+    ...(fields.dailyPush ? { dailyPush: true } : {}),
   };
   dynamicTasks.push(newTask);
 
