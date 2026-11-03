@@ -16,6 +16,7 @@ import { useApp } from '../../context/AppContext';
 import { api } from '../../services/api';
 import { TaskItem } from '../../types';
 import { TaskTimerModal } from './TaskTimerModal';
+import { PushWatchCard } from './PushWatchCard';
 
 interface TasksModalProps {
   onClose: () => void;
@@ -27,6 +28,8 @@ export const TasksModal: React.FC<TasksModalProps> = ({ onClose }) => {
   // true after the first answer from the server (or when a saved copy was shown) - avoids a false "All Tasks Completed" while loading
   const [tasksLoaded, setTasksLoaded] = useState(false);
   const [claimingId, setClaimingId] = useState<string | null>(null);
+  // epoch ms until which no new Daily Push Watch ad may start (30s rest after a reward)
+  const [pushCooldownUntil, setPushCooldownUntil] = useState(0);
 
   // Active timers (taskId -> remainingSeconds)
   const [activeTimers, setActiveTimers] = useState<{ [taskId: string]: number }>({});
@@ -71,6 +74,8 @@ export const TasksModal: React.FC<TasksModalProps> = ({ onClose }) => {
         .then(res => {
           setTasks(res.tasks);
           setTasksLoaded(true);
+          const cd = Math.max(0, ...res.tasks.map((t: any) => Number(t.cooldownSeconds) || 0));
+          if (cd > 0) setPushCooldownUntil(Date.now() + cd * 1000);
           try { localStorage.setItem(`e4f_tasks_cache_${user.id}`, JSON.stringify(res.tasks)); } catch {}
         })
         .catch(() => setTasksLoaded(true));
@@ -357,6 +362,23 @@ export const TasksModal: React.FC<TasksModalProps> = ({ onClose }) => {
             </div>
           ) : (
             visibleTasks.map(task => {
+              if (task.dailyPush && user) {
+                return (
+                  <PushWatchCard
+                    key={task.id}
+                    task={task}
+                    userId={user.id}
+                    cooldownUntil={pushCooldownUntil}
+                    addToast={addToast}
+                    onRewarded={async (res: any) => {
+                      addToast('Task Completed!', `+${res.reward} ${res.asset} added to your account!`, 'success');
+                      setPushCooldownUntil(Date.now() + 30000);
+                      setTasks(prev => prev.map(t => (t.id === task.id ? { ...t, isCompleted: true, status: 'APPROVED' } : t)));
+                      try { await refreshProfile(); } catch {}
+                    }}
+                  />
+                );
+              }
               const isSubmitted = task.status === 'SUBMITTED';
               const isRejected = task.status === 'REJECTED';
               const isTimerTask = task.verificationMethod === 'TIMER' || Boolean(task.durationSeconds && task.durationSeconds > 0);
