@@ -24,6 +24,8 @@ interface TasksModalProps {
 export const TasksModal: React.FC<TasksModalProps> = ({ onClose }) => {
   const { user, refreshProfile, addToast } = useApp();
   const [tasks, setTasks] = useState<TaskItem[]>([]);
+  // true after the first answer from the server (or when a saved copy was shown) - avoids a false "All Tasks Completed" while loading
+  const [tasksLoaded, setTasksLoaded] = useState(false);
   const [claimingId, setClaimingId] = useState<string | null>(null);
 
   // Active timers (taskId -> remainingSeconds)
@@ -53,12 +55,34 @@ export const TasksModal: React.FC<TasksModalProps> = ({ onClose }) => {
 
   useEffect(() => {
     if (user) {
+      // Show the last known list instantly (if any), then refresh from the server in the background
+      try {
+        const raw = localStorage.getItem(`e4f_tasks_cache_${user.id}`);
+        if (raw) {
+          const cached = JSON.parse(raw);
+          if (Array.isArray(cached)) {
+            setTasks(cached);
+            setTasksLoaded(true);
+          }
+        }
+      } catch {}
       api
         .getTasks(user.id)
-        .then(res => setTasks(res.tasks))
-        .catch(() => {});
+        .then(res => {
+          setTasks(res.tasks);
+          setTasksLoaded(true);
+          try { localStorage.setItem(`e4f_tasks_cache_${user.id}`, JSON.stringify(res.tasks)); } catch {}
+        })
+        .catch(() => setTasksLoaded(true));
     }
   }, [user]);
+
+  // Keep the saved copy in sync after claims/refreshes so the next open never shows a finished task
+  useEffect(() => {
+    if (user && tasksLoaded) {
+      try { localStorage.setItem(`e4f_tasks_cache_${user.id}`, JSON.stringify(tasks)); } catch {}
+    }
+  }, [tasks, tasksLoaded, user]);
 
   // Handle Timer Countdown Tick
   useEffect(() => {
@@ -305,7 +329,21 @@ export const TasksModal: React.FC<TasksModalProps> = ({ onClose }) => {
 
         {/* Task Cards List */}
         <div className="space-y-3">
-          {visibleTasks.length === 0 ? (
+          {visibleTasks.length === 0 && !tasksLoaded ? (
+            <div className="space-y-3" aria-busy="true">
+              <div className="flex items-center gap-2 text-[11px] text-slate-400">
+                <span className="w-2 h-2 rounded-full bg-cyan-400 animate-pulse" />
+                Loading tasks…
+              </div>
+              {[0, 1].map(i => (
+                <div key={i} className="p-3.5 rounded-2xl bg-slate-900/60 border border-slate-800/80 space-y-2 animate-pulse">
+                  <div className="h-3 w-1/2 rounded bg-slate-700/70" />
+                  <div className="h-2.5 w-4/5 rounded bg-slate-800" />
+                  <div className="h-6 w-1/3 ml-auto rounded-xl bg-slate-700/60" />
+                </div>
+              ))}
+            </div>
+          ) : visibleTasks.length === 0 ? (
             <div className="py-12 px-4 text-center space-y-3.5 bg-slate-900/40 rounded-2xl border border-slate-800/80">
               <div className="w-14 h-14 mx-auto rounded-2xl bg-emerald-500/15 border border-emerald-500/30 flex items-center justify-center text-emerald-400 shadow-lg shadow-emerald-500/10">
                 <CheckCircle2 className="w-7 h-7" />
