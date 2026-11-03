@@ -226,6 +226,8 @@ export interface SocialTask {
   isCompleted?: boolean;
   category?: string;
   actionUrl?: string;
+  dailyPush?: boolean;
+  cooldownSeconds?: number;
 }
 
 export interface TaskSubmissionRecord {
