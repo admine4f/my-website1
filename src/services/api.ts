@@ -1032,6 +1032,32 @@ export const api = {
     throw new Error((data && data.error) || 'Could not claim the task. Please try again.');
   },
 
+  // Daily Push Watch (RichAds push-style) - step 1 runs only after the user tapped the notification
+  async pushWatchStart(userId: string, taskId: string): Promise<{ success: boolean; pushToken: string; durationSeconds: number }> {
+    const res = await fetch('/api/tasks/push-start', {
+      method: 'POST',
+      headers: api.getUserAuthHeaders(),
+      body: JSON.stringify({ userId, taskId }),
+    });
+    const data = await parseResponseJson(res);
+    if (res.ok && data && data.success) return data;
+    throw new Error((data && data.error) || 'Could not start. Please try again.');
+  },
+
+  async pushWatchClaim(userId: string, taskId: string, pushToken: string): Promise<any> {
+    const res = await fetch('/api/tasks/push-claim', {
+      method: 'POST',
+      headers: api.getUserAuthHeaders(),
+      body: JSON.stringify({ userId, taskId, pushToken }),
+    });
+    const data = await parseResponseJson(res);
+    if (res.ok && data && data.success) {
+      if (data.balances) saveLocalBalances(data.balances);
+      return data;
+    }
+    throw new Error((data && data.error) || 'Could not claim. Please try again.');
+  },
+
   async startTaskTimer(userId: string, taskId: string, accumulatedSeconds?: number): Promise<{ success: boolean; startTime: number; durationSeconds: number; url: string; strict?: boolean; accumulatedSeconds?: number }> {
     const res = await fetch('/api/tasks/start-timer', {
       method: 'POST',
