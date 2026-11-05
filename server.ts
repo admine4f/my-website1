@@ -2626,6 +2626,12 @@ async function recordLockedReferral(referrerId: string, referee: UserRecord): Pr
       { referrer_id: referrerTg, referee_id: refereeTg, bonus_amount: referralBonusNow(), status: 'LOCKED' },
       { onConflict: 'referee_id', ignoreDuplicates: true }
     );
+    // The database sign-up function (get_or_restore_user) may already have created this row with a fixed 0.5.
+    // The amount set by the admin must win, so fix the amount of any row that has not been paid out yet.
+    await supabase.from('referrals')
+      .update({ bonus_amount: referralBonusNow() })
+      .eq('referee_id', refereeTg)
+      .neq('status', 'QUALIFIED');
   } catch (e) {
     console.warn('[Referral] could not record locked referral:', e);
   }
