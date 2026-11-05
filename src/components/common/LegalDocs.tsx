@@ -278,7 +278,6 @@ export const LEGAL_DOCS: Record<LegalKey, LegalDoc> = {
           'Spin Wheel and Gift Boxes with daily limits',
           'Daily check-in, tasks and referrals',
           'Wallet (withdrawals open after E4F is listed)',
-          'Admin panel for notices, tasks and settings',
           'Server-verified rewards and ad checks',
           'Trusted Miner badge (120 consecutive mining days; not KYC or identity verification)',
         ],
