@@ -13,11 +13,11 @@ export const SupportModal: React.FC<SupportModalProps> = ({ onClose }) => {
   const faqs = [
     {
       q: 'What is E4F and when is the planned listing?',
-      a: 'E4F is the native utility token powering the E4F ecosystem. The planned target listing date is 28 February 2028. Before listing, E4F is in pre-listing phase with no market price or valuation.',
+      a: 'E4F is the native coin of the E4F project. The planned target listing date is 28 February 2028. It is a target only, not a confirmation from any exchange, and no exchange has approved a listing yet. After the mining program ends, E4F balances earned in the app are planned to be issued 1:1 as native E4F on the TON blockchain. Before a listing, E4F has no market price.',
     },
     {
       q: 'How does the 8-Hour Mining work?',
-      a: 'Each mining session lasts exactly 8 hours and mines at 0.25 E4F/hour (total 2.00 E4F per session). Automatic restart is strictly disabled; you must manually start each session and claim the reward.',
+      a: 'Each mining session lasts exactly 8 hours. The mining rate is shown on the Mining screen and can change, and referrals can boost it. Automatic restart is strictly disabled; you must manually start each session and claim the reward.',
     },
     {
       q: 'Are Spot trades executed immediately?',
@@ -25,7 +25,7 @@ export const SupportModal: React.FC<SupportModalProps> = ({ onClose }) => {
     },
     {
       q: 'How do I withdraw USDT?',
-      a: 'Navigate to Spot Wallet, select Withdraw, specify your TRC20/BEP20 address and amount. Requests undergo instant cryptographic risk checks before dispatch.',
+      a: 'Withdrawals are not available before E4F is listed. After a listing, withdrawals are planned to be enabled under published rules, including a minimum amount and review.',
     },
   ];
 
