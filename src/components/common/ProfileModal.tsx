@@ -307,7 +307,7 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({ onClose }) => {
                 <span>Mine 120 days in a row to become a Trusted Miner</span>
               </div>
               <p className="text-[11px] text-slate-200 leading-relaxed font-medium">
-                No ID card, no KYC and no deposit. Mine at least once every day (UTC time). After 120 days in a row your profile automatically shows ✅ Trusted Miner, which means you are a verified user and not a robot. If you miss a day, the count starts again.
+                No ID card, no KYC and no deposit. Mine at least once every day (UTC time). After 120 days in a row your profile automatically shows ✅ Trusted Miner, which means you completed 120 days of consecutive mining. If you miss a day, the count starts again.
               </p>
               <div>
                 <div className="flex justify-between text-[11px] font-bold mb-1">
@@ -326,7 +326,7 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({ onClose }) => {
             {user?.isVerified && (
               <div className="p-3 rounded-xl bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 text-xs font-bold flex items-center gap-2">
                 <CheckCircle2 className="w-4 h-4 shrink-0" />
-                <span>✅ Trusted Miner - your account is verified.</span>
+                <span>✅ Trusted Miner - 120-day mining achievement.</span>
               </div>
             )}
           </div>
@@ -401,10 +401,10 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({ onClose }) => {
                   <button
                     onClick={() => setShowVerifyView(true)}
                     className="px-3 py-1 rounded-full bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-slate-950 text-xs font-extrabold flex items-center gap-1 shadow-md shadow-amber-500/20 active:scale-95 transition-all cursor-pointer"
-                    title="Mine 120 days in a row to get verified"
+                    title="Mine 120 days in a row to become a Trusted Miner"
                   >
                     <ShieldAlert className="w-3.5 h-3.5 text-slate-950" />
-                    <span>Get Verified</span>
+                    <span>Trusted Miner</span>
                   </button>
                 )}
               </div>

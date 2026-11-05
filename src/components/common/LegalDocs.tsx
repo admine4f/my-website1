@@ -19,12 +19,12 @@ export interface LegalDoc {
   sections: LegalSection[];
 }
 
-const UPDATED = 'October 27, 2026';
+const UPDATED = 'November 5, 2026';
 
 export const LEGAL_DOCS: Record<LegalKey, LegalDoc> = {
   privacy: {
     title: 'Privacy Policy – E4F Web3 Exchange',
-    updated: 'October 30, 2026',
+    updated: 'November 5, 2026',
     intro:
       'E4F Web3 Exchange ("E4F", "we", "our", or "us") is a Telegram Mini App (TMA) that currently operates as a trading simulation and mining game.',
     sections: [
@@ -39,7 +39,7 @@ export const LEGAL_DOCS: Record<LegalKey, LegalDoc> = {
         h: '1. Information We Collect',
         blocks: [
           { p: 'We may collect and process the following information:' },
-          { li: ['Telegram Data: Telegram user ID, name, username, and language, verified through Telegram\'s authentication system.', 'Referral Data: Referral codes used or shared by users.', 'In-App Activity: Mining sessions, activity streaks, spins, gift boxes, daily check-ins, tasks, and virtual balances.', 'Security Information: IP address, device type, timestamps, and technical request logs.', 'Advertising Data: Advertising session identifiers, ad network information, and ad completion status.'] },
+          { li: ['Telegram Data: Telegram user ID, name, username, and language, verified through Telegram\'s authentication system.', 'Referral Data: Referral codes used or shared by users.', 'In-App Activity: Mining sessions, activity streaks, spins, gift boxes, daily check-ins, tasks, and in-app balances.', 'Security Information: IP address, device type, timestamps, and technical request logs.', 'Advertising Data: Advertising session identifiers, ad network information, and ad completion status.'] },
           { p: 'We do not request Telegram passwords, identity documents, selfies, phone contacts, or precise GPS location.' },
         ],
       },
@@ -47,27 +47,28 @@ export const LEGAL_DOCS: Record<LegalKey, LegalDoc> = {
         h: '1.1 Trusted Miner Activity System (No KYC)',
         blocks: [
           { p: 'E4F does not currently require identity documents, KYC verification, or deposits to use its game features.' },
-          { p: 'Users who complete the required daily mining activity for 120 consecutive UTC days may receive a "Trusted Miner" badge.' },
-          { p: 'If a user misses the required daily activity, the streak may reset.' },
-          { p: 'The badge indicates completion of an in-app activity requirement. It is not formal identity verification and does not guarantee that an account is operated by a human or that automated activity is impossible.' },
+          { p: 'The Trusted Miner badge is an in-app achievement for mining on 120 consecutive UTC days. If a user misses a day, the count restarts at Day 1 and a new 120-day period is needed. The badge is not KYC, not government or identity verification, and does not confirm a person\'s legal identity. E4F does not collect ID cards, passports or identity documents for it.' },
         ],
       },
       {
         h: '2. How We Use Information',
         blocks: [
           { p: 'We use collected information to:' },
-          { li: ['Operate the E4F Mini App.', 'Maintain mining and activity streaks.', 'Manage referrals and virtual rewards.', 'Prevent fraud, abuse, and automated activity.', 'Maintain security and improve performance.', 'Validate rewarded advertising sessions.', 'Fix technical issues and improve user experience.'] },
+          { li: ['Operate the E4F Mini App.', 'Maintain mining and activity streaks.', 'Manage referrals and rewards.', 'Prevent fraud, abuse, and automated activity.', 'Maintain security and improve performance.', 'Validate rewarded advertising sessions.', 'Fix technical issues and improve user experience.'] },
         ],
       },
       {
-        h: '2.1 Token Status, Virtual Balances and Payout Disclosure',
+        h: '2.1 Token Status, Balances and Planned Issue',
         blocks: [
           { p: 'E4F is currently in a pre-listing development phase.' },
           { p: 'The E4F token is not currently listed on any exchange through this application.' },
-          { p: 'All E4F and eUSDT balances displayed in the app are virtual in-app points used for simulation, gameplay, leaderboards, and ranking purposes.' },
-          { p: 'Important:' },
-          { li: ['eUSDT is not real USDT.', 'Virtual balances are not deposits or withdrawable cryptocurrency.', 'Real cryptocurrency deposits and withdrawals are currently not available.', 'Any future token listing, redemption, or withdrawal functionality will be subject to separate announcements, applicable terms, and availability.', 'Advertising rewards are virtual in-game points only.'] },
-          { p: 'E4F does not currently promise or guarantee monetary payouts.' },
+          { p: 'Balances shown in the app are in-app balances recorded on our servers.' },
+          { p: 'E4F is the native coin of the E4F project. After the mining program ends (Mining Season 1 is scheduled to run until 28 February 2028, as shown in the app), E4F balances earned in the app are planned to be issued 1:1 as native E4F on the TON blockchain, in line with Telegram rules. The exact date, claim method and conditions will be announced in the app.' },
+          { p: 'Accounts found to break the rules or to use fraud, bots or fake accounts may be excluded from the issue.' },
+          { p: 'The planned target listing date for E4F is 28 February 2028. This is the date E4F officially plans to work towards. It is not a confirmation from any exchange.' },
+          { p: 'As of the date of this document, no exchange has approved or confirmed an E4F listing. An actual listing depends on exchange approval, technical readiness and applicable terms. We will not present any listing as confirmed without official confirmation.' },
+          { p: 'Withdrawals are not available before E4F is listed. After a listing, withdrawals are planned to be enabled under published rules, including a minimum amount and review.' },
+          { p: 'Not promised: any exchange listing, any market price or value, and any profit or income. These depend on market, exchange, legal and technical conditions.' },
         ],
       },
       {
@@ -81,23 +82,24 @@ export const LEGAL_DOCS: Record<LegalKey, LegalDoc> = {
         h: '3.1 Basic Features Without Ads',
         blocks: [
           { p: 'The following basic game features are designed to remain accessible without watching advertisements:' },
-          { li: ['Mining.', 'Trading simulation.', 'Viewing the wallet.', 'Referrals.', 'Daily check-ins.', 'Tasks.', 'Viewing Trusted Miner status.'] },
+          { li: ['Starting a mining session (no advertisement is required to start mining).', 'Trading simulation.', 'Viewing the wallet.', 'Referrals.', 'Daily check-ins.', 'Tasks.', 'Viewing Trusted Miner status.'] },
         ],
       },
       {
         h: '3.2 Optional Advertisements for Bonus Rewards',
         blocks: [
-          { p: 'Users may voluntarily watch advertisements to receive additional virtual in-game rewards.' },
+          { p: 'Users may voluntarily watch advertisements to receive additional in-game rewards.' },
           { p: 'Advertisements may appear at these locations:' },
           { li: ['1. Spin Wheel Screen – "Extra Spin (Watch Ad)"', '2. Gift Box Screen – "Open Box (Watch Ad)"', '3. Daily Check-in Screen – "Claim Bonus (Watch Ad)"', '4. Mining Screen – "Bonus Reward (Watch Ad)"'] },
           { p: 'The app is designed so that:' },
-          { li: ['Users are informed when an action requires watching a rewarded ad.', 'Ads are optional and are not required for basic game functionality.', 'Rewards are granted only after the rewarded ad is successfully completed and validated.', 'Users do not receive rewards for merely clicking advertisements.', 'Closing an advertisement before completion does not qualify for a reward.'] },
+          { li: ['Users are informed when an action requires watching a rewarded ad.', 'Ads are optional and are not required for basic game functionality.', 'Rewards are granted only after the rewarded ad is successfully completed and validated.', 'Rewarded ads pay only after they are completed and validated. Sponsor tasks pay only after the task requirement, such as a waiting time, is completed. Some partner offers may open a partner page outside Telegram.', 'Closing an advertisement before completion does not qualify for a reward.'] },
           { p: 'Actual ad availability may depend on the advertising provider.' },
         ],
       },
       {
         h: '3.3 Third-Party Advertising Partners',
         blocks: [
+          { p: 'E4F works with third-party advertising partners. Each partner collects data under its own privacy policy. E4F does not control their data collection.' },
           { p: 'Third-party advertising networks may collect information such as device identifiers, advertising interaction data, and technical information according to their own privacy policies.' },
           { p: 'E4F may share advertising session information and relevant technical data with advertising partners to facilitate ad delivery, verification, fraud prevention, and monetization.' },
           { p: 'Users should review the privacy policies of the relevant advertising providers.' },
@@ -118,7 +120,7 @@ export const LEGAL_DOCS: Record<LegalKey, LegalDoc> = {
           { p: 'We retain information for as long as necessary to operate the service, maintain security, prevent fraud, and comply with applicable legal obligations.' },
           { p: 'Users may request account deletion through:' },
           { p: 'Profile → Delete Account' },
-          { p: 'Where deletion is available, associated account information, virtual balances, mining sessions, and game activity will be deleted or deactivated according to our deletion process.' },
+          { p: 'Where deletion is available, associated account information, balances, mining sessions, and game activity will be deleted or deactivated according to our deletion process.' },
           { p: 'Certain security or anti-fraud records may be retained for a limited period where reasonably necessary or legally required.' },
         ],
       },
@@ -157,7 +159,7 @@ export const LEGAL_DOCS: Record<LegalKey, LegalDoc> = {
         blocks: [
           { p: 'We may update this Privacy Policy when our services, features, advertising practices, or legal requirements change.' },
           { p: 'The latest update date will be displayed at the top of this document.' },
-          { p: 'Continued use of E4F after an update indicates acknowledgment of the revised policy, where permitted by applicable law.' },
+          { p: 'We do not currently ask users for a separate confirmation of policy updates.' },
         ],
       },
       {
@@ -166,7 +168,7 @@ export const LEGAL_DOCS: Record<LegalKey, LegalDoc> = {
           { p: 'For questions, privacy requests, or concerns regarding this Privacy Policy, contact us through the official E4F Web3 Exchange Telegram bot.' },
           { p: 'E4F Web3 Exchange' },
           { p: 'Telegram Mini App' },
-          { p: 'Privacy Policy – October 30, 2026' },
+          { p: 'Privacy Policy – November 5, 2026' },
         ],
       },
     ],
@@ -192,13 +194,13 @@ export const LEGAL_DOCS: Record<LegalKey, LegalDoc> = {
       {
         h: '3. Product overview',
         li: [
-          'Daily Mining: start a mining session and collect rewards when it finishes. A rewarded ad is watched to start a session.',
+          'Daily Mining: start a mining session and collect rewards when it finishes. No advertisement is required to start mining. An optional rewarded ad can give a bonus.',
           'Rewards Center: Spin Wheel and Gift Boxes, each limited per day (the day resets at 00:00 UTC).',
           'Daily Check-In: a 7-day streak of rewards.',
           'Tasks: simple tasks such as joining a channel or following a timer, reviewed and rewarded.',
           'Referrals: invite friends with a personal link; more active referrals raise your mining boost.',
-          'Wallet: Spot USDT and E4F pre-list balances, with withdrawals under the rules shown in the app.',
-          'Trusted Miner: mine every day for 120 days in a row to earn a verified badge. No ID is required.',
+          'Wallet: Spot USDT and E4F pre-list balances. Withdrawals are not available before E4F is listed.',
+          'Trusted Miner: The Trusted Miner badge is an in-app achievement for mining on 120 consecutive UTC days. If a user misses a day, the count restarts at Day 1 and a new 120-day period is needed. The badge is not KYC, not government or identity verification, and does not confirm a person\'s legal identity. E4F does not collect ID cards, passports or identity documents for it.',
           'Live control: notices, tasks and settings are managed by the team from an admin panel and appear instantly, without an app update.',
         ],
       },
@@ -211,9 +213,9 @@ export const LEGAL_DOCS: Record<LegalKey, LegalDoc> = {
       {
         h: '5. Ad integrity',
         li: [
-          'Ads play inside the Telegram Mini App. There is no redirect to another site.',
+          'Rewarded ads play inside the Telegram Mini App. Some partner offers, such as sponsor tasks, may open a partner page outside Telegram.',
           'A reward is given only after the ad finishes. Closing early gives no reward and does not count.',
-          'Users are never paid for clicking ads.',
+          'Rewarded ads pay only after the ad is completed. Sponsor tasks pay only after the task requirement, such as a waiting time, is completed.',
           'Every ad view is checked on the server. A view can be redeemed only once, and daily slots are counted on the server.',
           'Several ad networks are used in order. If one has no ad, the next one is tried.',
           'The app follows the rules of its ad partners, including a ban on fake traffic, bots and manipulated statistics.',
@@ -233,7 +235,13 @@ export const LEGAL_DOCS: Record<LegalKey, LegalDoc> = {
       {
         h: '7. The E4F token',
         p: [
-          'E4F balances are currently pre-list balances. E4F is not yet listed on any exchange. A listing, a price or any future value is not guaranteed and depends on market, legal and technical conditions.',
+          'E4F balances are currently pre-list balances. E4F is not yet listed on any exchange.',
+          'E4F is the native coin of the E4F project. After the mining program ends (Mining Season 1 is scheduled to run until 28 February 2028, as shown in the app), E4F balances earned in the app are planned to be issued 1:1 as native E4F on the TON blockchain, in line with Telegram rules. The exact date, claim method and conditions will be announced in the app.',
+          'Accounts found to break the rules or to use fraud, bots or fake accounts may be excluded from the issue.',
+          'The planned target listing date for E4F is 28 February 2028. This is the date E4F officially plans to work towards. It is not a confirmation from any exchange.',
+          'As of the date of this document, no exchange has approved or confirmed an E4F listing. An actual listing depends on exchange approval, technical readiness and applicable terms. We will not present any listing as confirmed without official confirmation.',
+          'Withdrawals are not available before E4F is listed. After a listing, withdrawals are planned to be enabled under published rules, including a minimum amount and review.',
+          'Not promised: any exchange listing, any market price or value, and any profit or income. These depend on market, exchange, legal and technical conditions.',
         ],
       },
       {
@@ -241,8 +249,11 @@ export const LEGAL_DOCS: Record<LegalKey, LegalDoc> = {
         li: [
           'This is not financial advice or an investment offer. Do not spend money you cannot afford to lose.',
           'Ad revenue can change, so rewards and limits can change.',
-          'Withdrawals may be reviewed and can be refused for fraud or rule violations.',
+          'Once withdrawals open after a listing, they may be reviewed and can be refused for fraud or rule violations.',
           'Crypto assets are volatile and the rules differ by country. You are responsible for following the laws where you live.',
+          'Cybersecurity problems and technical failures can interrupt the service or cause data loss.',
+          'Even if a listing happens, liquidity and a market price are not guaranteed.',
+          'Laws, exchange rules and Telegram or TON rules can change and may affect the token issue and any listing.',
         ],
       },
       {
@@ -263,12 +274,13 @@ export const LEGAL_DOCS: Record<LegalKey, LegalDoc> = {
       {
         h: 'Phase 1: Foundation (Live)',
         li: [
-          'Daily mining with rewarded ads',
+          'Daily mining (rewarded ads are optional bonuses)',
           'Spin Wheel and Gift Boxes with daily limits',
           'Daily check-in, tasks and referrals',
-          'Wallet and withdrawals',
+          'Wallet (withdrawals open after E4F is listed)',
           'Admin panel for notices, tasks and settings',
           'Server-verified rewards and ad checks',
+          'Trusted Miner badge (120 consecutive mining days; not KYC or identity verification)',
         ],
       },
       {
@@ -292,16 +304,21 @@ export const LEGAL_DOCS: Record<LegalKey, LegalDoc> = {
       {
         h: 'Phase 4: Wallet expansion (Planned)',
         li: [
-          'Deposits and more withdrawal networks',
+          'Deposits and withdrawal networks (after listing)',
           'Clearer transaction history and receipts',
           'Extra account security options',
         ],
       },
       {
-        h: 'Phase 5: E4F listing readiness (Planned, not guaranteed)',
+        h: 'Phase 5: E4F token issue and listing (Planned / Targeted)',
         li: [
-          'Legal and technical preparation for a possible E4F listing',
-          'The current internal target is 2028. It depends on market, legal and technical conditions and may move or not happen.',
+          'Internal preparation (Planned): legal and technical preparation for the token issue and a possible listing.',
+          'Token issue (Planned): E4F is the native coin of the E4F project. After the mining program ends (Mining Season 1 is scheduled to run until 28 February 2028, as shown in the app), E4F balances earned in the app are planned to be issued 1:1 as native E4F on the TON blockchain, in line with Telegram rules. The exact date, claim method and conditions will be announced in the app.',
+          'Exchange applications (Conditional): applications are made only when E4F is ready. No application has been approved.',
+          'Exchange approval (Conditional): As of the date of this document, no exchange has approved or confirmed an E4F listing. An actual listing depends on exchange approval, technical readiness and applicable terms. We will not present any listing as confirmed without official confirmation.',
+          'Listing (Targeted): The planned target listing date for E4F is 28 February 2028. This is the date E4F officially plans to work towards. It is not a confirmation from any exchange.',
+          'Deposits and withdrawals: Withdrawals are not available before E4F is listed. After a listing, withdrawals are planned to be enabled under published rules, including a minimum amount and review.',
+          'Not promised: any exchange listing, any market price or value, and any profit or income. These depend on market, exchange, legal and technical conditions.',
         ],
       },
     ],
