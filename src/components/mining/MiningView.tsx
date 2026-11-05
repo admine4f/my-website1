@@ -216,7 +216,7 @@ export const MiningView: React.FC = () => {
             </span>
           </h2>
           <p className="text-xs text-slate-400">
-            Mine E4F daily before Exchange Listing on 28 Feb 2028
+            Mine E4F daily. Planned listing target: 28 Feb 2028
           </p>
         </div>
 
