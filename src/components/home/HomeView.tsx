@@ -129,7 +129,7 @@ export const HomeView: React.FC = () => {
           </div>
           <div className="text-right">
             <div className="text-[10px] text-amber-400 font-bold uppercase tracking-wider">
-              Listing: 2028
+              Target: 28 Feb 2028
             </div>
             <div className="text-[9px] text-amber-400/90 font-medium">Not Listed Yet</div>
           </div>
