@@ -3476,6 +3476,11 @@ const handleStartMining = async (req: Request, res: Response) => {
               .eq('referee_id', refereeTgId)
               .maybeSingle();
             if (dbRef && Number(dbRef.bonus_amount) > 0) lockedAmount = Number(dbRef.bonus_amount);
+            // 0.5 is the fixed value written by the database sign-up function; the admin amount must win for unpaid rows.
+            if (dbRef && dbRef.status !== 'QUALIFIED' && Number(dbRef.bonus_amount) === 0.5) {
+              lockedAmount = referralBonusNow();
+              supabase.from('referrals').update({ bonus_amount: lockedAmount }).eq('referee_id', refereeTgId).neq('status', 'QUALIFIED').then(() => {}, () => {});
+            }
             if (dbRef && dbRef.status === 'QUALIFIED') {
               alreadyAwarded = true;
               if (refRecord) {
@@ -4747,9 +4752,14 @@ app.get('/api/referrals/:userId', requireUserAuth, async (req: Request, res: Res
     const dbRow = dbReferrals.find(d => Number(d.referee_id) === f.telegramId && f.telegramId > 0);
     const memRow = userReferrals.find(r => r.referredUserId === f.id);
     const qualified = Boolean((dbRow && dbRow.status === 'QUALIFIED') || (memRow && memRow.status === 'QUALIFIED'));
+    const staleDefault = !qualified && dbRow && Number(dbRow.bonus_amount) === 0.5;
+    if (staleDefault && supabase && f.telegramId > 0) {
+      // Fix the fixed 0.5 written by the sign-up function so the admin amount is shown and paid.
+      supabase.from('referrals').update({ bonus_amount: referralBonusNow() }).eq('referee_id', f.telegramId).neq('status', 'QUALIFIED').then(() => {}, () => {});
+    }
     const amount = qualified
       ? (Number(dbRow?.bonus_amount) || Number(memRow?.rewardEarned) || referralBonusNow())
-      : (Number(dbRow?.bonus_amount) > 0 ? Number(dbRow!.bonus_amount) : referralBonusNow());
+      : (staleDefault ? referralBonusNow() : (Number(dbRow?.bonus_amount) > 0 ? Number(dbRow!.bonus_amount) : referralBonusNow()));
     const st = streaks[f.id] || { streak: 0, active: false };
     return {
       id: f.id,
