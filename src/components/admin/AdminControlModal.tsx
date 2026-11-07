@@ -205,6 +205,7 @@ export const AdminControlModal: React.FC<AdminControlModalProps> = ({ onClose })
   // Task Submissions Review Queue
   const [submissions, setSubmissions] = useState<any[]>([]);
   const [reviewingId, setReviewingId] = useState<string | null>(null);
+  const [rejectNotes, setRejectNotes] = useState<Record<string, string>>({});
   const [previewScreenshotUrl, setPreviewScreenshotUrl] = useState<string | null>(null);
 
   // Users List
@@ -883,14 +884,17 @@ export const AdminControlModal: React.FC<AdminControlModalProps> = ({ onClose })
   const handleReviewSubmission = async (submissionId: string, decision: 'APPROVE' | 'REJECT') => {
     setReviewingId(submissionId);
     try {
-      await api.reviewTaskSubmission(submissionId, decision, decision === 'APPROVE' ? 'Verified by Admin' : 'Insufficient proof submitted', adminKey);
+      const note = decision === 'APPROVE' ? 'Verified by Admin' : ((rejectNotes[submissionId] || '').trim() || 'Insufficient proof submitted');
+      const result: any = await api.reviewTaskSubmission(submissionId, decision, note, adminKey);
+      const isDuplicate = Boolean(result && result.duplicate);
+      const finalStatus = decision === 'APPROVE' && !isDuplicate ? 'APPROVED' : 'REJECTED';
       setSubmissions(prev =>
-        prev.map(s => (s.id === submissionId ? { ...s, status: decision === 'APPROVE' ? 'APPROVED' : 'REJECTED' } : s))
+        prev.map(s => (s.id === submissionId ? { ...s, status: finalStatus } : s))
       );
       addToast(
-        decision === 'APPROVE' ? 'Submission Approved' : 'Submission Rejected',
-        decision === 'APPROVE' ? 'Reward credited to user wallet' : 'Proof rejected',
-        decision === 'APPROVE' ? 'success' : 'info'
+        isDuplicate ? 'Duplicate Closed' : decision === 'APPROVE' ? 'Submission Approved' : 'Submission Rejected',
+        isDuplicate ? 'Already rewarded earlier. No second payment.' : decision === 'APPROVE' ? 'Reward credited to user wallet' : 'Proof rejected. The user can see your reason.',
+        decision === 'APPROVE' && !isDuplicate ? 'success' : 'info'
       );
     } catch (err: any) {
       addToast('Review Failed', err.message, 'error');
@@ -3608,6 +3612,16 @@ export const AdminControlModal: React.FC<AdminControlModalProps> = ({ onClose })
                         </div>
 
                         {/* Actions */}
+                        {sub.status === 'SUBMITTED' && (
+                          <input
+                            type="text"
+                            maxLength={300}
+                            value={rejectNotes[sub.id] || ''}
+                            onChange={e => setRejectNotes(prev => ({ ...prev, [sub.id]: e.target.value }))}
+                            placeholder="Reason if rejected (the user will see this)"
+                            className="w-full px-2.5 py-1.5 rounded-xl bg-slate-900/60 border border-slate-700 text-slate-200 text-xs placeholder:text-slate-500 outline-none"
+                          />
+                        )}
                         {sub.status === 'SUBMITTED' && (
                           <div className="flex items-center gap-2 pt-1">
                             <button
