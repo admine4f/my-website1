@@ -408,6 +408,11 @@ export const TasksModal: React.FC<TasksModalProps> = ({ onClose }) => {
                       <p className="text-[10px] text-slate-400 leading-snug">
                         {task.description}
                       </p>
+                      {isRejected && task.rejectReason && (
+                        <p className="text-[10px] text-rose-300 leading-snug mt-1">
+                          Reason: {task.rejectReason}
+                        </p>
+                      )}
                     </div>
 
                     <div className="text-[11px] font-extrabold text-amber-400 font-mono shrink-0">
