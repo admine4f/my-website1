@@ -223,6 +223,7 @@ export interface SocialTask {
   verificationMethod: 'AUTO' | 'MANUAL' | 'TIMER';
   durationSeconds?: number;
   submittedProof?: string;
+  rejectReason?: string;
   isCompleted?: boolean;
   category?: string;
   actionUrl?: string;
