@@ -646,6 +646,7 @@ export interface TaskSubmissionRecord {
   adminNote?: string;
 }
 const taskSubmissionsQueue: TaskSubmissionRecord[] = [];
+const MAX_REJECTED_ATTEMPTS = 3; // a user can re-submit a rejected proof at most this many times
 
 // Active Website Task Timers (userId_taskId -> startTime)
 const activeTaskTimers = new Map<string, { startTime: number; durationSeconds: number; accumulatedSeconds?: number }>();
@@ -4328,6 +4329,9 @@ app.get('/api/tasks/:userId', requireUserAuth, async (req: Request, res: Respons
       status: sub ? sub.status : 'AVAILABLE',
       isCompleted,
       submittedProof: sub?.proof,
+      rejectReason: sub?.status === 'REJECTED'
+        ? (taskSubmissionsQueue.find(q => q.userId === userId && q.taskId === t.id && q.status === 'REJECTED')?.adminNote || undefined)
+        : undefined,
       timerActive: !!activeTimer,
       timerStartTime: activeTimer?.startTime,
     };
@@ -4588,6 +4592,19 @@ app.post('/api/tasks/submit', requireUserAuth, async (req: Request, res: Respons
   if (existing && existing.status === 'SUBMITTED') {
     return res.status(400).json({ success: false, error: 'Your proof is already waiting for admin review.' });
   }
+  // Same task can never be rewarded or queued twice: check the database and the review queue directly.
+  if (supabase) {
+    try {
+      const { data: claimed } = await supabase.from('e4f_task_claims').select('task_id').eq('user_id', userId).eq('task_id', taskId).maybeSingle();
+      if (claimed) return res.status(400).json({ success: false, error: 'Task already completed and rewarded' });
+    } catch {}
+  }
+  if (taskSubmissionsQueue.some(s => s.userId === userId && s.taskId === taskId && s.status === 'SUBMITTED')) {
+    return res.status(400).json({ success: false, error: 'Your proof is already waiting for admin review.' });
+  }
+  if (taskSubmissionsQueue.filter(s => s.userId === userId && s.taskId === taskId && s.status === 'REJECTED').length >= MAX_REJECTED_ATTEMPTS) {
+    return res.status(400).json({ success: false, error: 'Maximum attempts reached for this task. Please contact support.' });
+  }
 
   const primaryProof = String(usernameOrLink || proof || '').trim().slice(0, 500);
   if (screenshot && String(screenshot).length > 400000) {
@@ -4664,6 +4681,9 @@ app.post('/api/tasks/submit', requireUserAuth, async (req: Request, res: Respons
       rewardAsset: task.rewardAsset,
       timestamp: Date.now(),
     };
+    if (taskSubmissionsQueue.some(s => s.userId === userId && s.taskId === taskId && s.status === 'SUBMITTED')) {
+      return res.status(400).json({ success: false, error: 'Your proof is already waiting for admin review.' });
+    }
     taskSubmissionsQueue.unshift(subRecord);
     scheduleSaveDatabase();
 
@@ -6667,8 +6687,18 @@ app.post('/api/admin/task-submissions/review', requireAdminAuth, async (req: Req
   if (decision === 'APPROVE') {
     try {
       if (!(await claimTaskOnce(sub.userId, sub.taskId))) {
-        sub.status = 'APPROVED';
-        return res.status(400).json({ success: false, error: 'This task was already rewarded to the user.' });
+        // The reward was already paid earlier: close this duplicate (no second payment) and save it.
+        sub.status = 'REJECTED';
+        sub.adminNote = 'This task was already rewarded to you earlier, so it cannot be rewarded again.';
+        auditLogs.unshift({
+          id: `audit_${Date.now()}`,
+          adminId: 'ADMIN_SUPER',
+          action: 'REJECT_TASK_PROOF',
+          target: sub.id,
+          details: `Duplicate submission closed for task ${sub.taskTitle}: already rewarded earlier`,
+          timestamp: Date.now(),
+        });
+        return res.json({ success: true, duplicate: true, submission: sub });
       }
     } catch (e) { return res.status(503).json({ success: false, error: 'Temporary storage error. Please try again.' }); }
     sub.status = 'APPROVED';
@@ -6712,7 +6742,7 @@ app.post('/api/admin/task-submissions/review', requireAdminAuth, async (req: Req
     });
   } else {
     sub.status = 'REJECTED';
-    sub.adminNote = adminNote || 'Rejected by Administrator: Insufficient or invalid proof';
+    sub.adminNote = String(adminNote || '').trim().slice(0, 300) || 'Rejected by Administrator: Insufficient or invalid proof';
 
     if (existingSub) {
       existingSub.status = 'REJECTED';
