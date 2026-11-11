@@ -198,7 +198,7 @@ export const AdminControlModal: React.FC<AdminControlModalProps> = ({ onClose })
   const [newTaskUrl, setNewTaskUrl] = useState('https://');
   const [newTaskAsset, setNewTaskAsset] = useState<'E4F' | 'USDT'>('USDT');
   const [newTaskReward, setNewTaskReward] = useState('1.00');
-  const [newTaskMethod, setNewTaskMethod] = useState<'AUTO' | 'MANUAL' | 'TIMER' | 'PUSH'>('TIMER');
+  const [newTaskMethod, setNewTaskMethod] = useState<'AUTO' | 'MANUAL' | 'TIMER' | 'PUSH' | 'VISIT'>('TIMER');
   const [newTaskTimerSec, setNewTaskTimerSec] = useState('30');
   const [editingTaskId, setEditingTaskId] = useState<string | null>(null);
 
@@ -798,10 +798,14 @@ export const AdminControlModal: React.FC<AdminControlModalProps> = ({ onClose })
         rewardAsset: newTaskAsset,
         rewardAmount: newTaskMethod === 'PUSH'
           ? Math.min(0.05, Math.max(0.001, parseFloat(newTaskReward) || 0.005))
-          : (parseFloat(newTaskReward) || 1.0),
-        verificationMethod: newTaskMethod === 'PUSH' ? 'TIMER' : newTaskMethod,
-        durationSeconds: newTaskMethod === 'TIMER' || newTaskMethod === 'PUSH' ? Math.max(5, parseInt(newTaskTimerSec) || 30) : undefined,
+          : newTaskMethod === 'VISIT'
+            ? (parseFloat(newTaskReward) || 0.001)
+            : (parseFloat(newTaskReward) || 1.0),
+        verificationMethod: newTaskMethod === 'PUSH' || newTaskMethod === 'VISIT' ? 'TIMER' : newTaskMethod,
+        durationSeconds: newTaskMethod === 'TIMER' || newTaskMethod === 'PUSH' || newTaskMethod === 'VISIT' ? Math.max(5, parseInt(newTaskTimerSec) || 30) : undefined,
         dailyPush: newTaskMethod === 'PUSH',
+        cooldownVisit: newTaskMethod === 'VISIT',
+        dailyVisit: newTaskMethod === 'VISIT',
         ...(newTaskMethod === 'PUSH' ? { rewardAsset: 'USDT' } : {}),
       };
       if (editingTaskId) {
@@ -840,7 +844,7 @@ export const AdminControlModal: React.FC<AdminControlModalProps> = ({ onClose })
     setNewTaskUrl(task.url || 'https://');
     setNewTaskAsset(task.rewardAsset === 'E4F' ? 'E4F' : 'USDT');
     setNewTaskReward(String(task.rewardAmount ?? '1.00'));
-    setNewTaskMethod(task.dailyPush ? 'PUSH' : (['AUTO', 'MANUAL', 'TIMER'].includes(task.verificationMethod) ? task.verificationMethod : 'MANUAL'));
+    setNewTaskMethod(task.cooldownVisit ? 'VISIT' : task.dailyPush ? 'PUSH' : (['AUTO', 'MANUAL', 'TIMER'].includes(task.verificationMethod) ? task.verificationMethod : 'MANUAL'));
     setNewTaskTimerSec(String(task.durationSeconds || 30));
     setEditingTaskId(task.id);
     try { window.scrollTo({ top: 0, behavior: 'smooth' }); } catch {}
@@ -3359,6 +3363,7 @@ export const AdminControlModal: React.FC<AdminControlModalProps> = ({ onClose })
                           <option value="MANUAL">Manual Proof Review</option>
                           <option value="AUTO">Auto-Verified</option>
                           <option value="PUSH">Daily Push Watch (RichAds)</option>
+                          <option value="VISIT">Daily Visit (once per UTC day)</option>
                         </select>
                       </div>
                     </div>
@@ -3404,16 +3409,16 @@ export const AdminControlModal: React.FC<AdminControlModalProps> = ({ onClose })
                         <label className="text-[10px] text-slate-400 block mb-1">Amount</label>
                         <input
                           type="number"
-                          step={newTaskMethod === 'PUSH' ? '0.001' : '0.1'}
-                          min={newTaskMethod === 'PUSH' ? '0.001' : undefined}
-                          max={newTaskMethod === 'PUSH' ? '0.05' : undefined}
+                          step={newTaskMethod === 'PUSH' || newTaskMethod === 'VISIT' ? '0.001' : '0.1'}
+                          min={newTaskMethod === 'PUSH' ? '0.001' : newTaskMethod === 'VISIT' ? '0.0001' : undefined}
+                          max={newTaskMethod === 'PUSH' ? '0.05' : newTaskMethod === 'VISIT' && newTaskAsset === 'USDT' ? '1' : undefined}
                           value={newTaskReward}
                           onChange={e => setNewTaskReward(e.target.value)}
                           className="w-full px-2 py-1.5 rounded-xl bg-slate-950 border border-slate-800 text-xs text-white"
                         />
                       </div>
 
-                      {(newTaskMethod === 'TIMER' || newTaskMethod === 'PUSH') && (
+                      {(newTaskMethod === 'TIMER' || newTaskMethod === 'PUSH' || newTaskMethod === 'VISIT') && (
                         <div>
                           <div className="flex items-center justify-between mb-1">
                             <label className="text-[10px] text-amber-300 font-bold block">Timer (Seconds)</label>
@@ -3447,6 +3452,14 @@ export const AdminControlModal: React.FC<AdminControlModalProps> = ({ onClose })
                         </div>
                       )}
                     </div>
+
+                    {newTaskMethod === 'VISIT' && (
+                      <div className="p-2.5 rounded-xl bg-amber-500/10 border border-amber-500/30">
+                        <p className="text-[10px] text-slate-300 leading-snug">
+                          Each user can complete this task once per UTC day. After a successful visit it is hidden for that user and comes back at 00:00 UTC. No total limit. Set the link, reward and timer above. Reward max 1 USDT per visit.
+                        </p>
+                      </div>
+                    )}
 
                     <button
                       onClick={handleCreateTask}
@@ -3486,7 +3499,7 @@ export const AdminControlModal: React.FC<AdminControlModalProps> = ({ onClose })
                               +{task.rewardAmount} {task.rewardAsset}
                             </span>
                             <span className="text-[10px] text-slate-400 font-mono">
-                              {task.dailyPush ? 'DAILY PUSH' : task.verificationMethod} {task.durationSeconds ? `(${task.durationSeconds}s)` : ''}
+                              {task.cooldownVisit ? 'DAILY VISIT' : task.dailyPush ? 'DAILY PUSH' : task.verificationMethod} {task.durationSeconds ? `(${task.durationSeconds}s)` : ''}
                             </span>
                           </div>
                         </div>
