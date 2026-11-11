@@ -229,6 +229,13 @@ export interface SocialTask {
   actionUrl?: string;
   dailyPush?: boolean;
   cooldownSeconds?: number;
+  cooldownVisit?: boolean;
+  dailyVisit?: boolean;
+  cooldownHours?: number;
+  perUserDaily?: number;
+  globalDaily?: number;
+  visitWaitSeconds?: number;
+  visitsToday?: number;
 }
 
 export interface TaskSubmissionRecord {
