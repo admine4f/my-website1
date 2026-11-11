@@ -1044,6 +1044,32 @@ export const api = {
     throw new Error((data && data.error) || 'Could not start. Please try again.');
   },
 
+  // Cooldown Visit (direct link, repeats after a cooldown)
+  async visitStart(userId: string, taskId: string): Promise<{ success: boolean; visitToken: string; durationSeconds: number }> {
+    const res = await fetch('/api/tasks/visit-start', {
+      method: 'POST',
+      headers: api.getUserAuthHeaders(),
+      body: JSON.stringify({ userId, taskId }),
+    });
+    const data = await parseResponseJson(res);
+    if (res.ok && data && data.success) return data;
+    throw new Error((data && data.error) || 'Could not start. Please try again.');
+  },
+
+  async visitClaim(userId: string, taskId: string, visitToken: string): Promise<any> {
+    const res = await fetch('/api/tasks/visit-claim', {
+      method: 'POST',
+      headers: api.getUserAuthHeaders(),
+      body: JSON.stringify({ userId, taskId, visitToken }),
+    });
+    const data = await parseResponseJson(res);
+    if (res.ok && data && data.success) {
+      if (data.balances) saveLocalBalances(data.balances);
+      return data;
+    }
+    throw new Error((data && data.error) || 'Could not claim. Please try again.');
+  },
+
   async pushWatchClaim(userId: string, taskId: string, pushToken: string): Promise<any> {
     const res = await fetch('/api/tasks/push-claim', {
       method: 'POST',
