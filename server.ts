@@ -552,6 +552,11 @@ interface DynamicTask {
   verificationMethod: 'AUTO' | 'MANUAL' | 'TIMER';
   durationSeconds?: number;
   dailyPush?: boolean; // RichAds Push-style daily Watch task (resets every UTC day)
+  cooldownVisit?: boolean; // Direct-link visit task (Daily Visit): once per user per UTC day, hidden after a successful visit
+  dailyVisit?: boolean; // true = fixed rule: 1 visit per user per UTC day, no total limit, no cooldown
+  cooldownHours?: number; // wait between two visits of the same user (default 3)
+  perUserDaily?: number; // max visits per user per UTC day (default 3, 0 = unlimited)
+  globalDaily?: number; // max visits of all users per UTC day (default 990, 0 = unlimited)
 }
 
 const dynamicTasks: DynamicTask[] = [
@@ -4282,6 +4287,175 @@ function clampPushReward(n: any): number {
   return Math.round(Math.min(PUSH_MAX_REWARD, Math.max(PUSH_MIN_REWARD, x)) * 1e6) / 1e6;
 }
 
+
+// ---- Cooldown Visit tasks (direct link; repeats after a cooldown; per-user and total daily limits) ----
+// Table: e4f_cooldown_visits (id = user|task|startTime, so one started visit can be paid only once).
+const COOLDOWN_MAX_USDT = 1;
+const COOLDOWN_MAX_E4F = 1000;
+const devCooldownVisits: Array<{ id: string; userId: string; taskId: string; at: number }> = []; // dev fallback only
+function cvCfg(task: DynamicTask) {
+  const hours = Number(task.cooldownHours);
+  const per = Number(task.perUserDaily);
+  const glob = Number(task.globalDaily);
+  return {
+    cooldownMs: task.dailyVisit ? 0 : Math.round((isFinite(hours) && hours > 0 ? hours : 3) * 3600 * 1000),
+    perUser: task.dailyVisit ? 1 : (isFinite(per) && per >= 0 ? Math.floor(per) : 3),
+    global: task.dailyVisit ? 0 : (isFinite(glob) && glob >= 0 ? Math.floor(glob) : 990),
+    durationSeconds: Math.max(5, Math.min(600, Number(task.durationSeconds) || 15)),
+  };
+}
+function utcDayStartMs(): number { const d = new Date(); return Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()); }
+async function getCooldownState(userId: string, task: DynamicTask): Promise<{ userToday: number; lastAt: number; globalToday: number }> {
+  const cfg = cvCfg(task);
+  const dayStart = utcDayStartMs();
+  if (!supabase) {
+    const mine = devCooldownVisits.filter(v => v.taskId === task.id && v.userId === userId);
+    return {
+      userToday: mine.filter(v => v.at >= dayStart).length,
+      lastAt: mine.reduce((m, v) => Math.max(m, v.at), 0),
+      globalToday: devCooldownVisits.filter(v => v.taskId === task.id && v.at >= dayStart).length,
+    };
+  }
+  let userToday = 0, lastAt = 0, globalToday = 0;
+  try {
+    const since = new Date(Math.min(dayStart, Date.now() - cfg.cooldownMs - 60000)).toISOString();
+    const { data } = await supabase.from('e4f_cooldown_visits').select('claimed_at').eq('user_id', userId).eq('task_id', task.id).gte('claimed_at', since).order('claimed_at', { ascending: false }).limit(200);
+    for (const r of data || []) {
+      const t = Date.parse(r.claimed_at) || 0;
+      if (t >= dayStart) userToday++;
+      lastAt = Math.max(lastAt, t);
+    }
+  } catch {}
+  if (cfg.global > 0) {
+    try {
+      const { count } = await supabase.from('e4f_cooldown_visits').select('id', { count: 'exact', head: true }).eq('task_id', task.id).gte('claimed_at', new Date(dayStart).toISOString());
+      globalToday = Number(count) || 0;
+    } catch {}
+  }
+  return { userToday, lastAt, globalToday };
+}
+// hidden = the user (or everybody) reached the daily limit; waitSec = seconds until the next visit is allowed
+function cvAvailability(task: DynamicTask, st: { userToday: number; lastAt: number; globalToday: number }) {
+  const cfg = cvCfg(task);
+  const hiddenUser = cfg.perUser > 0 && st.userToday >= cfg.perUser;
+  const hiddenGlobal = cfg.global > 0 && st.globalToday >= cfg.global;
+  const waitSec = Math.max(0, Math.ceil((st.lastAt + cfg.cooldownMs - Date.now()) / 1000));
+  return { hidden: hiddenUser || hiddenGlobal, hiddenUser, hiddenGlobal, waitSec };
+}
+async function insertCooldownVisit(id: string, userId: string, taskId: string): Promise<boolean> {
+  if (!supabase) {
+    if (isProduction) return false;
+    if (devCooldownVisits.some(v => v.id === id)) return false;
+    devCooldownVisits.push({ id, userId, taskId, at: Date.now() });
+    return true;
+  }
+  const { error } = await supabase.from('e4f_cooldown_visits').insert({ id, user_id: userId, task_id: taskId });
+  if (!error) return true;
+  if ((error as any).code === '23505') return false;
+  throw new Error('cooldown-visit-store: ' + error.message);
+}
+async function deleteCooldownVisit(id: string): Promise<void> {
+  if (!supabase) { const i = devCooldownVisits.findIndex(v => v.id === id); if (i >= 0) devCooldownVisits.splice(i, 1); return; }
+  try { await supabase.from('e4f_cooldown_visits').delete().eq('id', id); } catch {}
+}
+function clampCooldownReward(n: any, asset: string): number {
+  const v = Number(n);
+  const max = asset === 'E4F' ? COOLDOWN_MAX_E4F : COOLDOWN_MAX_USDT;
+  const x = isFinite(v) && v > 0 ? v : 0.001;
+  return Math.round(Math.min(max, Math.max(0.0001, x)) * 1e6) / 1e6;
+}
+
+app.post('/api/tasks/visit-start', requireUserAuth, async (req: Request, res: Response) => {
+  const userId = String((req as any).verifiedUserId || req.body?.userId || '');
+  const taskId = String(req.body?.taskId || '');
+  const task = dynamicTasks.find(t => t.id === taskId);
+  if (!task || !task.cooldownVisit) return res.status(404).json({ success: false, error: 'Task not found' });
+  const st = await getCooldownState(userId, task);
+  const av = cvAvailability(task, st);
+  if (av.hiddenGlobal) return res.status(400).json({ success: false, error: 'The daily limit for this task is reached. Please try again tomorrow.' });
+  if (av.hiddenUser) return res.status(400).json({ success: false, error: 'You reached today\'s limit for this task. Come back after 00:00 UTC.' });
+  if (av.waitSec > 0) return res.status(429).json({ success: false, error: 'Please wait before the next visit.', visitWaitSeconds: av.waitSec });
+  const cfg = cvCfg(task);
+  const visitToken = adSign('timer', { uid: userId, tid: taskId, cv: 1, fs: Date.now() });
+  res.json({ success: true, visitToken, durationSeconds: cfg.durationSeconds });
+});
+
+app.post('/api/tasks/visit-claim', requireUserAuth, async (req: Request, res: Response) => {
+  const userId = String((req as any).verifiedUserId || req.body?.userId || '');
+  const taskId = String(req.body?.taskId || '');
+  const task = dynamicTasks.find(t => t.id === taskId);
+  if (!task || !task.cooldownVisit) return res.status(404).json({ success: false, error: 'Task not found' });
+  const tk = adVerify('timer', req.body?.visitToken);
+  if (!tk || tk.cv !== 1 || tk.uid !== userId || tk.tid !== taskId) {
+    return res.status(400).json({ success: false, error: 'Please start the visit again.' });
+  }
+  const cfg = cvCfg(task);
+  const ageSec = (Date.now() - Number(tk.fs)) / 1000;
+  if (!(ageSec >= 0) || ageSec > 30 * 60) return res.status(400).json({ success: false, error: 'This visit expired. Please start again.' });
+  if (ageSec < cfg.durationSeconds - 1) {
+    const remaining = Math.max(1, Math.ceil(cfg.durationSeconds - ageSec));
+    return res.status(400).json({ success: false, error: `Please wait ${remaining}s more.`, remainingSeconds: remaining });
+  }
+  const user = await getUserFromSupabase(userId);
+  const userBalance = await getSupabaseBalance(userId);
+  if (!user || !userBalance) return res.status(404).json({ success: false, error: 'User not found' });
+
+  const st = await getCooldownState(userId, task);
+  const av = cvAvailability(task, st);
+  if (av.hiddenGlobal) return res.status(400).json({ success: false, error: 'The daily limit for this task is reached. Please try again tomorrow.' });
+  if (av.hiddenUser) return res.status(400).json({ success: false, error: 'You reached today\'s limit for this task. Come back after 00:00 UTC.' });
+  if (av.waitSec > 0) return res.status(429).json({ success: false, error: 'Please wait before the next visit.', visitWaitSeconds: av.waitSec });
+
+  const visitId = `${userId}|${taskId}|${Number(tk.fs)}`;
+  try {
+    if (!(await insertCooldownVisit(visitId, userId, taskId))) return res.status(400).json({ success: false, error: 'This visit was already rewarded.' });
+  } catch (e) { return res.status(503).json({ success: false, error: 'Temporary storage error. Please try again.' }); }
+
+  // Double-check after saving (protects against two requests arriving at the same moment).
+  const st2 = await getCooldownState(userId, task);
+  const over = (cfg.perUser > 0 && st2.userToday > cfg.perUser) || (cfg.global > 0 && st2.globalToday > cfg.global);
+  let tooClose = false;
+  if (supabase) {
+    try {
+      const mineAt = Date.now();
+      const { data } = await supabase.from('e4f_cooldown_visits').select('id,claimed_at').eq('user_id', userId).eq('task_id', taskId).gte('claimed_at', new Date(mineAt - cfg.cooldownMs).toISOString()).neq('id', visitId);
+      tooClose = (data || []).length > 0;
+    } catch {}
+  } else {
+    tooClose = devCooldownVisits.some(v => v.userId === userId && v.taskId === taskId && v.id !== visitId && Date.now() - v.at < cfg.cooldownMs);
+  }
+  if (over || tooClose) {
+    await deleteCooldownVisit(visitId);
+    return res.status(429).json({ success: false, error: 'Please wait before the next visit.' });
+  }
+
+  const asset = task.rewardAsset === 'E4F' ? 'E4F' : 'USDT';
+  const reward = clampCooldownReward(task.rewardAmount, asset);
+  if (asset === 'USDT') userBalance.usdt = Number((userBalance.usdt + reward).toFixed(6));
+  else userBalance.e4f = Number((userBalance.e4f + reward).toFixed(6));
+  const tx: TxRecord = {
+    id: `tx_${Date.now()}_cvisit`,
+    userId,
+    asset,
+    amount: reward,
+    direction: 'IN',
+    source: 'TASK_REWARD',
+    status: 'COMPLETED',
+    timestamp: Date.now(),
+    note: `Visit Task Completed: ${task.title}`,
+  };
+  await recordTransaction(tx);
+  await setSupabaseBalance(userId, userBalance).catch(() => {});
+  scheduleSaveDatabase();
+  const visitsToday = st2.userToday;
+  res.json({
+    success: true, status: 'APPROVED', reward, asset, balances: userBalance,
+    cooldownSeconds: Math.round(cfg.cooldownMs / 1000),
+    visitsToday,
+    hidden: cfg.perUser > 0 && visitsToday >= cfg.perUser,
+  });
+});
+
 app.use(['/api/announcements', '/api/tasks', '/api/admin/announcements', '/api/admin/tasks', '/api/admin/task-submissions'], async (req: Request, res: Response, next: NextFunction) => {
   await loadAdminContent(req.method !== 'GET');
   if (req.method !== 'GET' && req.method !== 'OPTIONS' && (req.originalUrl.startsWith('/api/admin/') || req.originalUrl.startsWith('/api/tasks/submit'))) {
@@ -4308,7 +4482,26 @@ app.get('/api/tasks/:userId', requireUserAuth, async (req: Request, res: Respons
   const daily = hasPush ? await getDailyState(userId) : { doneToday: new Set<string>(), lastClaimAt: 0 };
   const cooldownSeconds = Math.max(0, Math.ceil((daily.lastClaimAt + PUSH_COOLDOWN_SEC * 1000 - Date.now()) / 1000));
 
+  const cvState = new Map<string, { userToday: number; lastAt: number; globalToday: number }>();
+  for (const t of dynamicTasks) if (t.cooldownVisit) cvState.set(t.id, await getCooldownState(userId, t));
+
   const tasksWithStatus = dynamicTasks.map(t => {
+    if (t.cooldownVisit) {
+      const st = cvState.get(t.id) || { userToday: 0, lastAt: 0, globalToday: 0 };
+      const av = cvAvailability(t, st);
+      const cfg = cvCfg(t);
+      return {
+        ...t,
+        status: 'AVAILABLE',
+        isCompleted: false,
+        timerActive: false,
+        durationSeconds: cfg.durationSeconds,
+        visitWaitSeconds: av.waitSec,
+        visitsToday: st.userToday,
+        perUserDaily: cfg.perUser,
+        hiddenForUser: av.hidden,
+      };
+    }
     if (t.dailyPush) {
       const done = daily.doneToday.has(t.id);
       return {
@@ -4337,7 +4530,7 @@ app.get('/api/tasks/:userId', requireUserAuth, async (req: Request, res: Respons
     };
   });
 
-  res.json({ tasks: tasksWithStatus });
+  res.json({ tasks: tasksWithStatus.filter((t: any) => !t.hiddenForUser) });
 });
 
 // Daily Push Watch: step 1 - called by the app ONLY after the user tapped the RichAds notification.
@@ -4408,7 +4601,7 @@ app.post('/api/tasks/start-timer', requireUserAuth, (req: Request, res: Response
   const timerOwner = String((req as any).verifiedUserId || userId);
   const task = dynamicTasks.find(t => t.id === taskId);
   if (!task) return res.status(404).json({ success: false, error: 'Task not found' });
-  if (task.dailyPush) return res.status(400).json({ success: false, error: 'Use the Watch button for this task.' });
+  if (task.dailyPush || task.cooldownVisit) return res.status(400).json({ success: false, error: 'Use the button shown on this task.' });
   if (task.verificationMethod !== 'TIMER' && (!task.durationSeconds || task.durationSeconds <= 0)) {
     return res.status(400).json({ success: false, error: 'This task does not use timer verification' });
   }
@@ -4488,7 +4681,7 @@ app.post('/api/tasks/verify-timer', requireUserAuth, async (req: Request, res: R
 
   const task = dynamicTasks.find(t => t.id === taskId);
   if (!task) return res.status(404).json({ success: false, error: 'Task not found' });
-  if (task.dailyPush) return res.status(400).json({ success: false, error: 'Use the Watch button for this task.' });
+  if (task.dailyPush || task.cooldownVisit) return res.status(400).json({ success: false, error: 'Use the button shown on this task.' });
 
   if (task.verificationMethod === 'MANUAL') {
     return res.status(400).json({ success: false, error: 'This task needs admin review. Submit your proof instead.' });
@@ -4576,7 +4769,7 @@ app.post('/api/tasks/submit', requireUserAuth, async (req: Request, res: Respons
 
   const task = dynamicTasks.find(t => t.id === taskId);
   if (!task) return res.status(404).json({ success: false, error: 'Task not found' });
-  if (task.dailyPush) return res.status(400).json({ success: false, error: 'Use the Watch button for this task.' });
+  if (task.dailyPush || task.cooldownVisit) return res.status(400).json({ success: false, error: 'Use the button shown on this task.' });
 
   await hydrateUserTasks(userId);
   let userSubs = userTaskSubmissions.get(userId);
@@ -6607,6 +6800,28 @@ function cleanTaskFields(src: any, base?: Partial<DynamicTask>): Partial<Dynamic
     const d = parseInt(String(src.durationSeconds ?? base?.durationSeconds ?? 30));
     out.durationSeconds = Math.max(10, Math.min(120, isFinite(d) ? d : 30));
   }
+  if (src.cooldownVisit !== undefined) out.cooldownVisit = src.cooldownVisit === true || src.cooldownVisit === 'true';
+  const cv = out.cooldownVisit !== undefined ? out.cooldownVisit : !!base?.cooldownVisit;
+  if (cv) {
+    // Cooldown Visit: reward set freely by the admin (safety ceiling), timer 5-600s, limits editable
+    out.cooldownVisit = true;
+    out.dailyPush = false;
+    out.verificationMethod = 'TIMER';
+    const asset = (out.rewardAsset || base?.rewardAsset) === 'E4F' ? 'E4F' : 'USDT';
+    out.rewardAsset = asset;
+    out.rewardAmount = clampCooldownReward(src.rewardAmount !== undefined ? src.rewardAmount : base?.rewardAmount, asset);
+    const d = parseInt(String(src.durationSeconds ?? base?.durationSeconds ?? 15));
+    out.durationSeconds = Math.max(5, Math.min(600, isFinite(d) ? d : 15));
+    const h = Number(src.cooldownHours ?? base?.cooldownHours ?? 3);
+    out.cooldownHours = Math.round(Math.min(24, Math.max(0.05, isFinite(h) ? h : 3)) * 100) / 100;
+    const pu = parseInt(String(src.perUserDaily ?? base?.perUserDaily ?? 3));
+    out.perUserDaily = Math.max(0, Math.min(1000, isFinite(pu) ? pu : 3));
+    const gd = parseInt(String(src.globalDaily ?? base?.globalDaily ?? 990));
+    out.globalDaily = Math.max(0, Math.min(100000000, isFinite(gd) ? gd : 990));
+    if (src.dailyVisit !== undefined) out.dailyVisit = src.dailyVisit === true || src.dailyVisit === 'true';
+    if (out.dailyVisit === undefined && base?.dailyVisit) out.dailyVisit = true;
+    if (out.dailyVisit) { out.perUserDaily = 1; out.globalDaily = 0; out.cooldownHours = 0; }
+  }
   return out;
 }
 
@@ -6625,6 +6840,7 @@ app.post('/api/admin/tasks', requireAdminAuth, (req: Request, res: Response) => 
     verificationMethod: fields.verificationMethod || 'AUTO',
     durationSeconds: fields.durationSeconds,
     ...(fields.dailyPush ? { dailyPush: true } : {}),
+    ...(fields.cooldownVisit ? { cooldownVisit: true, dailyVisit: fields.dailyVisit === true, cooldownHours: fields.cooldownHours, perUserDaily: fields.perUserDaily, globalDaily: fields.globalDaily } : {}),
   };
   dynamicTasks.push(newTask);
 
