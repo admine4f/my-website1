@@ -17,6 +17,7 @@ import { api } from '../../services/api';
 import { TaskItem } from '../../types';
 import { TaskTimerModal } from './TaskTimerModal';
 import { PushWatchCard } from './PushWatchCard';
+import { CooldownVisitCard } from './CooldownVisitCard';
 
 interface TasksModalProps {
   onClose: () => void;
@@ -30,6 +31,8 @@ export const TasksModal: React.FC<TasksModalProps> = ({ onClose }) => {
   const [claimingId, setClaimingId] = useState<string | null>(null);
   // epoch ms until which no new Daily Push Watch ad may start (30s rest after a reward)
   const [pushCooldownUntil, setPushCooldownUntil] = useState(0);
+  // Cooldown Visit tasks: taskId -> epoch ms when the next visit is allowed (only set from a fresh server answer)
+  const [visitAvailableAt, setVisitAvailableAt] = useState<{ [taskId: string]: number }>({});
 
   // Active timers (taskId -> remainingSeconds)
   const [activeTimers, setActiveTimers] = useState<{ [taskId: string]: number }>({});
@@ -76,6 +79,9 @@ export const TasksModal: React.FC<TasksModalProps> = ({ onClose }) => {
           setTasksLoaded(true);
           const cd = Math.max(0, ...res.tasks.map((t: any) => Number(t.cooldownSeconds) || 0));
           if (cd > 0) setPushCooldownUntil(Date.now() + cd * 1000);
+          const va: { [taskId: string]: number } = {};
+          res.tasks.forEach((t: any) => { if (t.cooldownVisit && Number(t.visitWaitSeconds) > 0) va[t.id] = Date.now() + Number(t.visitWaitSeconds) * 1000; });
+          setVisitAvailableAt(va);
           try { localStorage.setItem(`e4f_tasks_cache_${user.id}`, JSON.stringify(res.tasks)); } catch {}
         })
         .catch(() => setTasksLoaded(true));
@@ -362,6 +368,27 @@ export const TasksModal: React.FC<TasksModalProps> = ({ onClose }) => {
             </div>
           ) : (
             visibleTasks.map(task => {
+              if (task.cooldownVisit && user) {
+                return (
+                  <CooldownVisitCard
+                    key={task.id}
+                    task={task}
+                    userId={user.id}
+                    availableAt={visitAvailableAt[task.id] || 0}
+                    addToast={addToast}
+                    onRewarded={async (res: any) => {
+                      addToast('Task Completed!', `+${res.reward} ${res.asset} added to your account!`, 'success');
+                      if (res.hidden) {
+                        setTasks(prev => prev.filter(t => t.id !== task.id));
+                      } else {
+                        setVisitAvailableAt(prev => ({ ...prev, [task.id]: Date.now() + (Number(res.cooldownSeconds) || 10800) * 1000 }));
+                        setTasks(prev => prev.map(t => (t.id === task.id ? { ...t, visitsToday: res.visitsToday } : t)));
+                      }
+                      try { await refreshProfile(); } catch {}
+                    }}
+                  />
+                );
+              }
               if (task.dailyPush && user) {
                 return (
                   <PushWatchCard
