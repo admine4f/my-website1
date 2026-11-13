@@ -1838,6 +1838,197 @@ refreshMarketPrices();
 // REST API ROUTES
 // ====================================================
 
+// ====================================================
+// TELEGRAM BOT NOTIFICATIONS (additive; touches no app feature)
+// Called by an external scheduler (cron-job.org) every ~5 minutes:
+//   GET /api/cron/notify?key=<CRON_SECRET>
+// 1) Mining finished -> one message per session (only if not claimed yet).
+// 2) Daily reminder  -> one silent message per UTC day (Spin / Gift Boxes).
+// Safety: max 2 messages per user per UTC day, once per session/day (DB unique key),
+// users who blocked the bot are never messaged again, inactive users (>14 days) are skipped,
+// everything is try/catch and fail-quiet. Set NOTIFY=off in Vercel to stop instantly.
+// ====================================================
+const NOTIFY_BOT_LINK = 'https://t.me/E4F_Web3_mining_bot/app';
+const NOTIFY_MAX_PER_DAY = 2;
+const NOTIFY_ACTIVE_DAYS = 14;
+const NOTIFY_DAILY_FROM_HOUR_UTC = 8;
+const NOTIFY_DAILY_TO_HOUR_UTC = 20;
+const NOTIFY_BATCH = 60; // messages per run (well under Telegram limits)
+const notifySleep = (ms: number) => new Promise(r => setTimeout(r, ms));
+
+function notifyTgId(userId: string): number {
+  return parseInt(String(userId).replace(/\D/g, '')) || 0;
+}
+
+/** Returns 'ok' | 'blocked' | 'error'. Never throws. */
+async function notifySend(userId: string, text: string, silent: boolean, button: string): Promise<'ok' | 'blocked' | 'error'> {
+  const chatId = notifyTgId(userId);
+  if (!TELEGRAM_BOT_TOKEN || chatId <= 0) return 'blocked';
+  try {
+    const r = await fetch(`https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        chat_id: chatId,
+        text,
+        disable_notification: silent,
+        disable_web_page_preview: true,
+        reply_markup: { inline_keyboard: [[{ text: button, url: NOTIFY_BOT_LINK }]] },
+      }),
+    });
+    if (r.ok) return 'ok';
+    if (r.status === 403 || r.status === 400) return 'blocked'; // bot blocked / chat not found / deactivated
+    return 'error';
+  } catch {
+    return 'error';
+  }
+}
+
+/** Atomically reserve (user,kind,ref). true = reserved now, false = already exists. */
+async function notifyReserve(userId: string, kind: string, ref: string): Promise<boolean> {
+  if (!supabase) return false;
+  const { error } = await supabase.from('e4f_notify_log').insert({ user_id: userId, kind, ref });
+  if (!error) return true;
+  if ((error as any).code === '23505') return false;
+  throw new Error(error.message);
+}
+async function notifyRelease(userId: string, kind: string, ref: string): Promise<void> {
+  try { await supabase!.from('e4f_notify_log').delete().eq('user_id', userId).eq('kind', kind).eq('ref', ref); } catch {}
+}
+
+async function notifyBlockedSet(userIds: string[]): Promise<Set<string>> {
+  const out = new Set<string>();
+  if (!supabase || userIds.length === 0) return out;
+  for (let i = 0; i < userIds.length; i += 200) {
+    const part = userIds.slice(i, i + 200);
+    const { data } = await supabase.from('e4f_notify_log').select('user_id').eq('kind', 'blocked').in('user_id', part);
+    (data || []).forEach((r: any) => out.add(r.user_id));
+  }
+  return out;
+}
+
+async function notifySentTodayCounts(userIds: string[]): Promise<Map<string, number>> {
+  const out = new Map<string, number>();
+  if (!supabase || userIds.length === 0) return out;
+  const since = todayUTC() + 'T00:00:00.000Z';
+  for (let i = 0; i < userIds.length; i += 200) {
+    const part = userIds.slice(i, i + 200);
+    const { data } = await supabase.from('e4f_notify_log').select('user_id').in('kind', ['mining_end', 'daily']).gte('sent_at', since).in('user_id', part);
+    (data || []).forEach((r: any) => out.set(r.user_id, (out.get(r.user_id) || 0) + 1));
+  }
+  return out;
+}
+
+async function runMiningEndNotifications(budget: number): Promise<number> {
+  if (!supabase) return 0;
+  const now = Date.now();
+  const { data, error } = await supabase
+    .from('mining_sessions')
+    .select('id,user_id,end_time,status')
+    .in('status', ['ACTIVE', 'COMPLETED'])
+    .lte('end_time', now)
+    .gte('end_time', now - 6 * 3600 * 1000) // only fresh endings, never old backlog
+    .order('end_time', { ascending: true })
+    .limit(budget * 2);
+  if (error || !data) return 0;
+  const ids = Array.from(new Set(data.map((r: any) => String(r.user_id))));
+  const blocked = await notifyBlockedSet(ids);
+  const counts = await notifySentTodayCounts(ids);
+  let sent = 0;
+  for (const s of data as any[]) {
+    if (sent >= budget) break;
+    const uid = String(s.user_id);
+    if (blocked.has(uid)) continue;
+    if ((counts.get(uid) || 0) >= NOTIFY_MAX_PER_DAY) continue;
+    const ref = String(s.id);
+    let reserved = false;
+    try { reserved = await notifyReserve(uid, 'mining_end', ref); } catch { continue; }
+    if (!reserved) continue;
+    const result = await notifySend(uid, 'Your mining session is complete. Open the app to claim your reward.', false, 'Claim Reward');
+    if (result === 'ok') {
+      sent++;
+      counts.set(uid, (counts.get(uid) || 0) + 1);
+    } else if (result === 'blocked') {
+      try { await notifyReserve(uid, 'blocked', 'x'); } catch {}
+    } else {
+      await notifyRelease(uid, 'mining_end', ref); // transient error: retry next run
+    }
+    await notifySleep(40);
+  }
+  return sent;
+}
+
+async function runDailyReminders(budget: number): Promise<number> {
+  if (!supabase) return 0;
+  const hour = new Date().getUTCHours();
+  if (hour < NOTIFY_DAILY_FROM_HOUR_UTC || hour >= NOTIFY_DAILY_TO_HOUR_UTC) return 0;
+  const day = todayUTC();
+  const sinceMs = Date.now() - NOTIFY_ACTIVE_DAYS * 86400000;
+  // Active users = started a mining session in the last 14 days.
+  const active = new Set<string>();
+  for (let from = 0; from < 20000; from += 1000) {
+    const { data, error } = await supabase
+      .from('mining_sessions')
+      .select('user_id')
+      .gte('start_time', sinceMs)
+      .order('start_time', { ascending: false })
+      .range(from, from + 999);
+    if (error || !data) break;
+    data.forEach((r: any) => active.add(String(r.user_id)));
+    if (data.length < 1000) break;
+  }
+  if (active.size === 0) return 0;
+  const all = Array.from(active);
+  // Already reminded today (any run).
+  const done = new Set<string>();
+  for (let i = 0; i < all.length; i += 200) {
+    const { data } = await supabase.from('e4f_notify_log').select('user_id').eq('kind', 'daily').eq('ref', day).in('user_id', all.slice(i, i + 200));
+    (data || []).forEach((r: any) => done.add(r.user_id));
+  }
+  // Already used Spin/Gift today -> they are active today, do not disturb.
+  const engaged = new Set<string>();
+  for (let i = 0; i < all.length; i += 200) {
+    const { data } = await supabase.from('e4f_daily_claims').select('user_id').eq('day', day).in('user_id', all.slice(i, i + 200));
+    (data || []).forEach((r: any) => engaged.add(r.user_id));
+  }
+  const blocked = await notifyBlockedSet(all);
+  const todo = all.filter(u => !done.has(u) && !engaged.has(u) && !blocked.has(u) && notifyTgId(u) > 0);
+  const counts = await notifySentTodayCounts(todo.slice(0, budget * 2));
+  let sent = 0;
+  for (const uid of todo) {
+    if (sent >= budget) break;
+    if ((counts.get(uid) || 0) >= NOTIFY_MAX_PER_DAY) continue;
+    let reserved = false;
+    try { reserved = await notifyReserve(uid, 'daily', day); } catch { continue; }
+    if (!reserved) continue;
+    const result = await notifySend(uid, 'Your daily Spin and Gift Boxes are ready. Open the app to collect today\'s rewards.', true, 'Open App');
+    if (result === 'ok') sent++;
+    else if (result === 'blocked') { try { await notifyReserve(uid, 'blocked', 'x'); } catch {} }
+    else await notifyRelease(uid, 'daily', day);
+    await notifySleep(40);
+  }
+  return sent;
+}
+
+app.get('/api/cron/notify', async (req: Request, res: Response) => {
+  const secret = process.env.CRON_SECRET || '';
+  if (!secret) return res.status(503).json({ ok: false, error: 'disabled' });
+  const given = String(req.query.key || (req.headers.authorization || '').replace(/^Bearer\s+/i, ''));
+  const a = Buffer.from(given);
+  const b = Buffer.from(secret);
+  if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) return res.status(401).json({ ok: false });
+  if (String(process.env.NOTIFY || '').toLowerCase() === 'off') return res.json({ ok: true, paused: true });
+  if (!supabase || !TELEGRAM_BOT_TOKEN) return res.json({ ok: true, skipped: 'not configured' });
+  try {
+    const mining = await runMiningEndNotifications(NOTIFY_BATCH);
+    const daily = await runDailyReminders(Math.max(0, NOTIFY_BATCH - mining));
+    return res.json({ ok: true, mining, daily });
+  } catch (e: any) {
+    console.error('[Notify] run failed:', e?.message || e);
+    return res.json({ ok: true, error: 'run failed' });
+  }
+});
+
 app.get('/api/health', (_req: Request, res: Response) => {
   res.json({ status: 'ok', service: 'E4F Web3 Exchange', serverTime: Date.now() });
 });
@@ -3102,11 +3293,62 @@ async function isUserSuspended(userId: string): Promise<boolean> {
   return v;
 }
 
+// ---- VPN / proxy gate for ads (real users earn; VPN traffic does not) ----
+// Uses proxycheck.io. Add the key in Vercel as PROXYCHECK_KEY (optional, raises the free daily limit).
+// Set VPN_BLOCK=off in Vercel to switch the gate off. If the check fails for any reason the user is NOT blocked.
+const vpnCache = new Map<string, { v: boolean; t: number }>();
+const VPN_CACHE_MS = 6 * 3600 * 1000;
+const VPN_ERROR_CACHE_MS = 2 * 60 * 1000;
+const VPN_BLOCK_MESSAGE = 'VPN or proxy detected. Please turn off your VPN and try again.';
+function clientIpOf(req: Request): string {
+  const raw = String(req.headers['x-forwarded-for'] || req.headers['x-real-ip'] || req.socket?.remoteAddress || '');
+  return raw.split(',')[0].trim().replace(/^::ffff:/, '');
+}
+function isPrivateIp(ip: string): boolean {
+  return !ip || ip === '::1' || ip.startsWith('127.') || ip.startsWith('10.') || ip.startsWith('192.168.') || /^172\.(1[6-9]|2\d|3[01])\./.test(ip) || ip.startsWith('fc') || ip.startsWith('fd') || ip.startsWith('fe80');
+}
+async function isVpnIp(ip: string): Promise<boolean> {
+  if (String(process.env.VPN_BLOCK || '').toLowerCase() === 'off') return false;
+  if (isPrivateIp(ip)) return false;
+  const hit = vpnCache.get(ip);
+  if (hit && Date.now() - hit.t < (hit.v === false && (hit as any).e ? VPN_ERROR_CACHE_MS : VPN_CACHE_MS)) return hit.v;
+  try {
+    const key = String(process.env.PROXYCHECK_KEY || '').trim();
+    const url = `https://proxycheck.io/v2/${encodeURIComponent(ip)}?vpn=1&asn=0&risk=0${key ? `&key=${encodeURIComponent(key)}` : ''}`;
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 2500);
+    const r = await fetch(url, { signal: ctrl.signal });
+    clearTimeout(timer);
+    const j: any = await r.json();
+    if (!j || j.status !== 'ok' || !j[ip]) {
+      vpnCache.set(ip, { v: false, t: Date.now(), e: true } as any); // error / quota: do not block
+      return false;
+    }
+    const v = String(j[ip].proxy || '').toLowerCase() === 'yes';
+    vpnCache.set(ip, { v, t: Date.now() });
+    if (vpnCache.size > 5000) vpnCache.clear();
+    return v;
+  } catch {
+    vpnCache.set(ip, { v: false, t: Date.now(), e: true } as any);
+    return false;
+  }
+}
+// Returns true (and answers the request) when the caller is on a VPN / proxy.
+async function rejectIfVpn(req: Request, res: Response): Promise<boolean> {
+  if (await isVpnIp(clientIpOf(req))) {
+    console.log('[vpn] ad blocked for user', String((req as any).verifiedUserId || ''));
+    res.status(403).json({ success: false, code: 'VPN_BLOCKED', error: VPN_BLOCK_MESSAGE });
+    return true;
+  }
+  return false;
+}
+
 app.post('/api/ads/session/create', requireUserAuth, async (req: Request, res: Response) => {
   const userId = String((req as any).verifiedUserId || '');
   const actionType = String(req.body?.actionType || '').toUpperCase() as AdAction;
   if (!userId) return res.status(401).json({ success: false, error: 'Authentication required' });
   if (await isUserSuspended(userId)) return res.status(403).json({ success: false, error: 'Your account is suspended.' });
+  if (await rejectIfVpn(req, res)) return;
   if (!['MINING', 'SPIN', 'GIFT_BOX'].includes(actionType)) {
     return res.status(400).json({ success: false, error: 'Invalid actionType. Must be MINING, SPIN or GIFT_BOX' });
   }
@@ -3245,6 +3487,7 @@ app.get('/api/monetag/postback', async (req: Request, res: Response) => {
 app.post('/api/ads/session/complete', requireUserAuth, async (req: Request, res: Response) => {
   const r = readAdSession(req);
   if (!r.ok) return res.status(r.status || 400).json({ success: false, error: r.error || 'Invalid ad session' });
+  if (await rejectIfVpn(req, res)) return;
   const p = r.p as Record<string, any>;
   const userId = r.userId as string;
   const action = p.act as AdAction;
@@ -4370,6 +4613,7 @@ app.post('/api/tasks/visit-start', requireUserAuth, async (req: Request, res: Re
   const taskId = String(req.body?.taskId || '');
   const task = dynamicTasks.find(t => t.id === taskId);
   if (!task || !task.cooldownVisit) return res.status(404).json({ success: false, error: 'Task not found' });
+  if (await rejectIfVpn(req, res)) return;
   const st = await getCooldownState(userId, task);
   const av = cvAvailability(task, st);
   if (av.hiddenGlobal) return res.status(400).json({ success: false, error: 'The daily limit for this task is reached. Please try again tomorrow.' });
@@ -4385,6 +4629,7 @@ app.post('/api/tasks/visit-claim', requireUserAuth, async (req: Request, res: Re
   const taskId = String(req.body?.taskId || '');
   const task = dynamicTasks.find(t => t.id === taskId);
   if (!task || !task.cooldownVisit) return res.status(404).json({ success: false, error: 'Task not found' });
+  if (await rejectIfVpn(req, res)) return;
   const tk = adVerify('timer', req.body?.visitToken);
   if (!tk || tk.cv !== 1 || tk.uid !== userId || tk.tid !== taskId) {
     return res.status(400).json({ success: false, error: 'Please start the visit again.' });
@@ -4539,6 +4784,7 @@ app.post('/api/tasks/push-start', requireUserAuth, async (req: Request, res: Res
   const taskId = String(req.body?.taskId || '');
   const task = dynamicTasks.find(t => t.id === taskId);
   if (!task || !task.dailyPush) return res.status(404).json({ success: false, error: 'Task not found' });
+  if (await rejectIfVpn(req, res)) return;
   const daily = await getDailyState(userId);
   if (daily.doneToday.has(taskId)) return res.status(400).json({ success: false, error: 'Already completed today. Come back after 00:00 UTC.' });
   const wait = Math.ceil((daily.lastClaimAt + PUSH_COOLDOWN_SEC * 1000 - Date.now()) / 1000);
