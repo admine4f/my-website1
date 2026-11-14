@@ -1852,7 +1852,8 @@ const NOTIFY_BOT_LINK = 'https://t.me/E4F_Web3_mining_bot/app';
 const NOTIFY_MAX_PER_DAY = 2;
 const NOTIFY_ACTIVE_DAYS = 14;
 const NOTIFY_DAILY_FROM_HOUR_UTC = 8;
-const NOTIFY_DAILY_TO_HOUR_UTC = 20;
+const NOTIFY_DAILY_TO_HOUR_UTC = 10;
+let notifyDailyDoneDay = ''; // per-instance: skip all DB reads once today's reminders are finished
 const NOTIFY_BATCH = 60; // messages per run (well under Telegram limits)
 const notifySleep = (ms: number) => new Promise(r => setTimeout(r, ms));
 
@@ -1963,6 +1964,7 @@ async function runDailyReminders(budget: number): Promise<number> {
   const hour = new Date().getUTCHours();
   if (hour < NOTIFY_DAILY_FROM_HOUR_UTC || hour >= NOTIFY_DAILY_TO_HOUR_UTC) return 0;
   const day = todayUTC();
+  if (notifyDailyDoneDay === day) return 0;
   const sinceMs = Date.now() - NOTIFY_ACTIVE_DAYS * 86400000;
   // Active users = started a mining session in the last 14 days.
   const active = new Set<string>();
@@ -1993,6 +1995,7 @@ async function runDailyReminders(budget: number): Promise<number> {
   }
   const blocked = await notifyBlockedSet(all);
   const todo = all.filter(u => !done.has(u) && !engaged.has(u) && !blocked.has(u) && notifyTgId(u) > 0);
+  if (todo.length === 0) { notifyDailyDoneDay = day; return 0; }
   const counts = await notifySentTodayCounts(todo.slice(0, budget * 2));
   let sent = 0;
   for (const uid of todo) {
@@ -2543,7 +2546,9 @@ app.get('/api/user/:userId/profile', requireUserAuth, async (req: Request, res: 
   // 90-day retention cutoff: return all user transactions within 90 days (up to 200)
   const cutoff = Date.now() - NINETY_DAYS_MS;
   let userTxs = transactions.filter(t => t.userId === user.id && t.timestamp >= cutoff);
-  if (userTxs.length === 0 && supabase) {
+  // ?lite=1 is the app's background refresh (it only uses user + balances): skip the heavy transactions read.
+  const liteProfile = req.query.lite === '1';
+  if (userTxs.length === 0 && supabase && !liteProfile) {
     try {
       const { data } = await supabase
         .from('transactions')
