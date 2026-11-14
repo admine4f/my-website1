@@ -52,7 +52,7 @@ export const TradeView: React.FC = () => {
     };
 
     loadData();
-    const interval = setInterval(loadData, 5000);
+    const interval = setInterval(() => { if (typeof document === 'undefined' || !document.hidden) loadData(); }, 5000);
     return () => clearInterval(interval);
   }, [selectedPair, orderType]);
 
