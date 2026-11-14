@@ -222,7 +222,7 @@ app.use((req, res, next) => {
 let settingsLoadedAt = 0;
 async function refreshSystemSettings(force = false): Promise<void> {
   if (!supabase) return;
-  if (!force && Date.now() - settingsLoadedAt < 3000) return;
+  if (!force && Date.now() - settingsLoadedAt < 20000) return;
   try {
     const { data, error } = await supabase.from('system_settings').select('settings').eq('id', 'global_settings').maybeSingle();
     if (error) return;
@@ -4412,12 +4412,19 @@ app.post(['/api/rewards/gift-box/open', '/api/rewards/gift-box/claim', '/rewards
 // memory between requests, so admin-created notices/tasks are stored in
 // Supabase (table e4f_content) and loaded into the arrays on each request.
 // ---------------------------------------------------------------------
-let contentLoadedAt = 0;
-async function loadAdminContent(force = false) {
+const CONTENT_KEYS = ['announcements', 'dynamic_tasks', 'task_queue'];
+const contentLoadedAtKey: Record<string, number> = {};
+/**
+ * Loads only the stale keys (egress saver). force = reload now. ttlMs = how long a loaded copy stays fresh.
+ * Writes (admin changes / task submit) always call this with force=true and ALL keys before saving.
+ */
+async function loadAdminContent(force = false, keys: string[] = CONTENT_KEYS, ttlMs = 4000) {
   if (!supabase) return;
-  if (!force && Date.now() - contentLoadedAt < 4000) return;
+  const nowMs = Date.now();
+  const stale = keys.filter(k => force || nowMs - (contentLoadedAtKey[k] || 0) >= ttlMs);
+  if (stale.length === 0) return;
   try {
-    const { data, error } = await supabase.from('e4f_content').select('key,value').in('key', ['announcements', 'dynamic_tasks', 'task_queue']);
+    const { data, error } = await supabase.from('e4f_content').select('key,value').in('key', stale);
     if (error) return;
     for (const row of data || []) {
       if (!Array.isArray(row.value)) continue;
@@ -4425,7 +4432,7 @@ async function loadAdminContent(force = false) {
       if (row.key === 'dynamic_tasks') { dynamicTasks.splice(0, dynamicTasks.length, ...row.value); }
       if (row.key === 'task_queue') { taskSubmissionsQueue.splice(0, taskSubmissionsQueue.length, ...row.value); }
     }
-    contentLoadedAt = Date.now();
+    for (const k of stale) contentLoadedAtKey[k] = Date.now();
   } catch {}
 }
 async function saveAdminContent(): Promise<boolean> {
@@ -4438,7 +4445,7 @@ async function saveAdminContent(): Promise<boolean> {
       { key: 'task_queue', value: taskSubmissionsQueue.slice(0, 500), updated_at: now },
     ], { onConflict: 'key' });
     if (error) { console.error('[content] save failed', error.message); return false; }
-    contentLoadedAt = Date.now();
+    for (const k of CONTENT_KEYS) contentLoadedAtKey[k] = Date.now();
     return true;
   } catch (e) { console.error('[content] save failed', e); return false; }
 }
@@ -4707,8 +4714,20 @@ app.post('/api/tasks/visit-claim', requireUserAuth, async (req: Request, res: Re
 });
 
 app.use(['/api/announcements', '/api/tasks', '/api/admin/announcements', '/api/admin/tasks', '/api/admin/task-submissions'], async (req: Request, res: Response, next: NextFunction) => {
-  await loadAdminContent(req.method !== 'GET');
-  if (req.method !== 'GET' && req.method !== 'OPTIONS' && (req.originalUrl.startsWith('/api/admin/') || req.originalUrl.startsWith('/api/tasks/submit'))) {
+  const isContentWrite = req.method !== 'GET' && req.method !== 'OPTIONS' && (req.originalUrl.startsWith('/api/admin/') || req.originalUrl.startsWith('/api/tasks/submit'));
+  const isAdminRoute = req.originalUrl.startsWith('/api/admin/');
+  if (isContentWrite) {
+    await loadAdminContent(true); // a write saves all three lists, so reload all of them first
+  } else if (isAdminRoute) {
+    await loadAdminContent(false); // admin screens: always fresh (4s)
+  } else if (req.originalUrl.startsWith('/api/announcements')) {
+    await loadAdminContent(false, ['announcements'], 30000); // notices: only what is needed
+  } else {
+    // user task routes (list, timer ping, visit ...): only tasks + queue. The list is kept fresh (10s), pings etc. 60s.
+    const isList = req.method === 'GET';
+    await loadAdminContent(false, ['dynamic_tasks', 'task_queue'], isList ? 10000 : 60000);
+  }
+  if (isContentWrite) {
     // Answer only after the change is stored in the database, so an admin never sees a fake "saved".
     const origJson = res.json.bind(res);
     (res as any).json = (body: any) => {
