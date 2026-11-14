@@ -584,9 +584,9 @@ export const api = {
   },
 
   // User Profile & Balances
-  async getProfile(userId: string): Promise<{ user: UserAccount; balances: WalletBalances; recentTransactions: TransactionRecord[]; serverTime: number }> {
+  async getProfile(userId: string, lite: boolean = false): Promise<{ user: UserAccount; balances: WalletBalances; recentTransactions: TransactionRecord[]; serverTime: number }> {
     try {
-      const res = await fetch(`/api/user/${userId}/profile`, { headers: api.getUserAuthHeaders() });
+      const res = await fetch(`/api/user/${userId}/profile${lite ? '?lite=1' : ''}`, { headers: api.getUserAuthHeaders() });
       const data = await parseResponseJson(res);
       if (res.ok && data && data.user) {
         if (data.user.telegramId === 8827675419 || userId === 'usr_8827675419') {
