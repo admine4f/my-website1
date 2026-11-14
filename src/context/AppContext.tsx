@@ -389,10 +389,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     return () => window.removeEventListener('e4f_balances_updated', handleBalancesUpdated);
   }, []);
 
-  const refreshProfile = useCallback(async () => {
+  const loadProfile = useCallback(async (lite: boolean) => {
     if (!user) return;
     try {
-      const res = await api.getProfile(user.id);
+      const res = await api.getProfile(user.id, lite);
       setUser(res.user);
       if (res.user?.id) {
         localStorage.setItem('e4f_user_id', res.user.id);
@@ -406,6 +406,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       console.error(e);
     }
   }, [user]);
+
+  const refreshProfile = useCallback(() => loadProfile(false), [loadProfile]);
 
   const updateBalances = useCallback((newBalances: WalletBalances) => {
     setBalances(newBalances);
@@ -431,12 +433,24 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   useEffect(() => {
     if (!user) return;
     refreshMining();
-    const interval = setInterval(() => {
+    let lastPoll = Date.now();
+    const poll = () => {
+      if (typeof document !== 'undefined' && document.hidden) return; // app in background: no server calls
+      lastPoll = Date.now();
       refreshMining();
-      refreshProfile();
-    }, 15000);
-    return () => clearInterval(interval);
-  }, [user, refreshMining, refreshProfile]);
+      loadProfile(true);
+    };
+    const interval = setInterval(poll, 60000);
+    // When the user comes back to the app, refresh right away (so data is never stale on screen).
+    const onVisible = () => {
+      if (typeof document !== 'undefined' && !document.hidden && Date.now() - lastPoll > 15000) poll();
+    };
+    if (typeof document !== 'undefined') document.addEventListener('visibilitychange', onVisible);
+    return () => {
+      clearInterval(interval);
+      if (typeof document !== 'undefined') document.removeEventListener('visibilitychange', onVisible);
+    };
+  }, [user, refreshMining, loadProfile]);
 
   // Notify about new referred friends and unlocked referral bonuses (checked once when the app opens)
   useEffect(() => {
